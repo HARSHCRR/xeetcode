@@ -11,7 +11,11 @@ services:
     region: oregon
 
     # Build from the monorepo root so npm workspaces resolve @xeetcode/shared.
-    buildCommand: npm ci && npm run build -w @xeetcode/server
+    #
+    # `--include=dev` is required: NODE_ENV=production (set below, for runtime)
+    # makes npm skip devDependencies, and TypeScript lives there — without this
+    # the build dies with "tsc: command not found".
+    buildCommand: npm ci --include=dev && npm run build -w @xeetcode/server
     startCommand: node apps/server/dist/index.js
 
     healthCheckPath: /health
