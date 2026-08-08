@@ -9,6 +9,9 @@
     "prebuild": "tsc -p ../../packages/shared/tsconfig.json",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
+    "test": "npm run build && node --test \"dist/**/*.test.js\"",
+    "db:migrate": "node --env-file-if-exists=.env --import tsx src/db/migrate.ts",
+    "db:seed": "node --env-file-if-exists=.env --import tsx src/db/seed.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src --max-warnings=0"
   },
@@ -16,6 +19,7 @@
     "@xeetcode/shared": "*",
     "cors": "^2.8.5",
     "express": "^4.21.1",
+    "pg": "^8.23.0",
     "socket.io": "^4.8.1"
   },
   "devDependencies": {
@@ -23,7 +27,9 @@
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^22.9.0",
+    "@types/pg": "^8.21.0",
     "eslint": "^9.14.0",
+    "socket.io-client": "^4.8.3",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "typescript-eslint": "^8.14.0"
