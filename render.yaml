@@ -23,7 +23,9 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      # Set this in the Render dashboard to the deployed Vercel URL, e.g.
-      # https://xeetcode.vercel.app  (comma-separate to allow several origins).
+      # Origins allowed to open a socket / call the API. This is a public URL,
+      # not a secret, so it lives here rather than being hand-set in the
+      # dashboard — the blueprint stays reproducible.
+      # Comma-separate to allow several (e.g. to add preview deployments).
       - key: CORS_ORIGIN
-        sync: false
+        value: https://xeetcode-web.vercel.app
