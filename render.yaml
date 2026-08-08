@@ -1,0 +1,25 @@
+# Render Blueprint for the realtime backend.
+#
+# The Next.js app is NOT deployed here — it lives on Vercel. Only the
+# always-on Socket.IO service runs on Render, because Vercel's serverless
+# functions can't hold long-lived connections or in-memory matchmaking state.
+services:
+  - type: web
+    name: xeetcode-server
+    runtime: node
+    plan: free
+    region: oregon
+
+    # Build from the monorepo root so npm workspaces resolve @xeetcode/shared.
+    buildCommand: npm ci && npm run build -w @xeetcode/server
+    startCommand: node apps/server/dist/index.js
+
+    healthCheckPath: /health
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Set this in the Render dashboard to the deployed Vercel URL, e.g.
+      # https://xeetcode.vercel.app  (comma-separate to allow several origins).
+      - key: CORS_ORIGIN
+        sync: false

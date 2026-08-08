@@ -1,0 +1,10 @@
+@import 'tailwindcss';
+
+/* Active theme. Swap this single import to change visual direction. */
+@import './themes/space.css';
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+}

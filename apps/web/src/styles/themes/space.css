@@ -1,0 +1,40 @@
+/**
+ * Space theme — v1 visual direction.
+ *
+ * This file defines ONLY the palette behind the semantic token names. Nothing
+ * outside this file (and `src/theme/space/`) should reference a raw colour like
+ * `#0b1020` or `indigo-500`; components use the semantic utilities these tokens
+ * generate (`bg-surface`, `text-accent`, `border-edge`, ...).
+ *
+ * To try a different visual direction: add a sibling file with the same token
+ * names, swap the import in `src/styles/globals.css`, and swap the decorative
+ * components in `src/theme/`. No component logic changes.
+ */
+
+@theme {
+  /* Surfaces — deep space background rising to lighter panels. */
+  --color-bg: #05060f;
+  --color-surface: #0b0f22;
+  --color-surface-raised: #141a35;
+  --color-edge: #232a4d;
+
+  /* Text */
+  --color-ink: #e8ecff;
+  --color-ink-muted: #9aa3c7;
+  --color-ink-faint: #626b91;
+
+  /* Accents — nebula violet / cyan glow */
+  --color-accent: #7c5cff;
+  --color-accent-strong: #9d85ff;
+  --color-accent-soft: #2a2160;
+  --color-cyan: #35d6f5;
+
+  /* Status */
+  --color-win: #3ddc97;
+  --color-lose: #ff5c7a;
+  --color-warn: #ffc86b;
+
+  /* Theme-specific effects, referenced by decorative components. */
+  --glow-accent: 0 0 24px rgb(124 92 255 / 0.45);
+  --glow-cyan: 0 0 24px rgb(53 214 245 / 0.35);
+}
