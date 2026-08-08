@@ -18,7 +18,56 @@ export type ProblemTopic = (typeof PROBLEM_TOPICS)[number];
 export const TOPIC_SELECTIONS = [...PROBLEM_TOPICS, 'random'] as const;
 export type TopicSelection = (typeof TOPIC_SELECTIONS)[number];
 
+/** Human-readable topic names, so the UI never hardcodes its own copies. */
+export const TOPIC_LABELS: Record<TopicSelection, string> = {
+  arrays: 'Arrays',
+  strings: 'Strings',
+  binary_search: 'Binary Search',
+  random: 'Random',
+};
+
+/** Narrows untrusted client input to a valid topic selection. */
+export function isTopicSelection(value: unknown): value is TopicSelection {
+  return typeof value === 'string' && (TOPIC_SELECTIONS as readonly string[]).includes(value);
+}
+
 export type Difficulty = 'easy' | 'medium' | 'hard';
+
+/**
+ * A single hidden test case. Never sent to the browser — it lives in the
+ * database and is only read inside the judge (Phase 3).
+ */
+export interface TestCase {
+  /** Positional arguments applied to the solution function. */
+  input: unknown[];
+  expected: unknown;
+}
+
+/** Full server-side problem, including the hidden tests. */
+export interface Problem extends PublicProblem {
+  testCases: TestCase[];
+}
+
+/**
+ * Narrows a problem to the fields safe to send to the browser.
+ *
+ * Deliberately an explicit allow-list rather than "spread and delete
+ * testCases": if a future field holds something secret, forgetting to exclude
+ * it would leak it to both players. This way a new field is invisible to the
+ * client until someone consciously adds it here.
+ */
+export function toPublicProblem(problem: Problem): PublicProblem {
+  return {
+    id: problem.id,
+    slug: problem.slug,
+    title: problem.title,
+    topic: problem.topic,
+    difficulty: problem.difficulty,
+    description: problem.description,
+    functionSignature: problem.functionSignature,
+    starterCode: problem.starterCode,
+  };
+}
 
 export type MatchMode = 'online' | 'friend';
 

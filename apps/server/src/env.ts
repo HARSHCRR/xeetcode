@@ -22,6 +22,15 @@ export const env = {
    * In production this must include the deployed Vercel URL.
    */
   corsOrigins: parseOrigins(process.env.CORS_ORIGIN),
+
+  /**
+   * Postgres connection string. A real credential — set via the Render
+   * dashboard in production and `.env` locally, never committed.
+   *
+   * Optional on purpose: without it the server still runs, serving problems
+   * from the bundled bank so local development needs no database setup.
+   */
+  databaseUrl: process.env.DATABASE_URL,
 } as const;
 
 export const isProduction = env.nodeEnv === 'production';

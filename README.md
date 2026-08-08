@@ -2,8 +2,9 @@
 
 Real-time 1v1 competitive coding — Chess.com-style matchmaking meets LeetCode.
 
-> **Status: Phase 1 (Foundation).** The monorepo, CI pipeline, and deployment
-> path are live end to end. Matchmaking and lobbies land in Phase 2.
+> **Status: Phase 2 (Matchmaking & lobbies).** Players can queue for a topic or
+> share a private lobby code, and both land in the same match room. The editor,
+> timer, and judging arrive in Phase 3.
 
 ## Architecture
 
@@ -51,6 +52,26 @@ cp apps/server/.env.example apps/server/.env
 ```
 
 Both have working localhost defaults, so this is optional for local dev.
+
+### Database (optional locally)
+
+The server runs without a database — it falls back to the problem bank bundled
+in `apps/server/src/problems/bank.ts`, so nothing needs setting up to develop
+matchmaking. To use Postgres, set `DATABASE_URL` in `apps/server/.env`, then:
+
+```bash
+npm run db:migrate -w @xeetcode/server   # applies schema.sql (safe to re-run)
+npm run db:seed     -w @xeetcode/server  # upserts the problem bank
+```
+
+`DATABASE_URL` is a real credential: it belongs in `.env` (gitignored) and in
+the Render dashboard, never in the repo.
+
+## Testing two players locally
+
+Matchmaking needs two sessions. Open the app in a normal window **and** a
+private/incognito window — they need separate `localStorage`, so two tabs in the
+same profile share a name but still work as two distinct players.
 
 ## Checks
 
