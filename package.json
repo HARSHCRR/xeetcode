@@ -1,0 +1,26 @@
+{
+  "name": "xeetcode",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Real-time 1v1 competitive coding platform",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "npm run build -w @xeetcode/shared && concurrently -n web,server -c cyan,magenta \"npm run dev -w @xeetcode/web\" \"npm run dev -w @xeetcode/server\"",
+    "dev:web": "npm run dev -w @xeetcode/web",
+    "dev:server": "npm run dev -w @xeetcode/server",
+    "build": "npm run build -w @xeetcode/shared && npm run build -w @xeetcode/server && npm run build -w @xeetcode/web",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run build -w @xeetcode/shared && npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "^5.6.3"
+  }
+}
