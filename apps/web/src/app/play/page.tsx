@@ -40,7 +40,7 @@ export default function PlayOnlinePage() {
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-xl flex-col justify-center gap-6 px-6 py-16">
-      <h1 className="text-center text-3xl font-bold text-accent-strong">Play Online</h1>
+      <h1 className="text-center text-2xl font-semibold text-ink">Play Online</h1>
 
       {error && <ErrorNote message={error} />}
 

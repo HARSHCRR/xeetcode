@@ -2,9 +2,9 @@
 
 Real-time 1v1 competitive coding — Chess.com-style matchmaking meets LeetCode.
 
-> **Status: Phase 2 (Matchmaking & lobbies).** Players can queue for a topic or
-> share a private lobby code, and both land in the same match room. The editor,
-> timer, and judging arrive in Phase 3.
+> **Status: feature-complete for v1.** Matchmaking, friend lobbies, the Monaco
+> editor, sandboxed judging, the 15-minute timer, in-match chat, Elo, and the
+> result screen all work end to end.
 
 ## Architecture
 
@@ -100,3 +100,33 @@ swapping one import in `apps/web/src/styles/globals.css`.
 
 Each side needs one environment variable pointing at the other:
 `NEXT_PUBLIC_BACKEND_URL` on Vercel, `CORS_ORIGIN` on Render.
+
+## Judging submissions
+
+Player code is untrusted, so it never runs in the server process. Each
+submission executes in a separate short-lived process with:
+
+- `--permission` — Node's permission model, denying filesystem access,
+  `child_process`, `worker_threads`, and native addons
+- an **empty environment**, so even a full escape sees no `DATABASE_URL`
+- a **hard timeout** with `SIGKILL`, and a heap cap
+
+`apps/server/src/judge/local.test.ts` asserts these hold by submitting code that
+actively tries to read files, spawn processes, and read a planted env canary.
+
+**Known gap:** Node's permission model does not gate outbound network access.
+With no credentials in the environment and no filesystem access this is low
+value to an attacker, but it is why this is not a substitute for a
+container-level sandbox at real scale.
+
+The Phase 0 design chose Piston's public API for this. That API became
+whitelist-only in February 2026, so the documented fallback became the primary
+path. Set `PISTON_URL` to a self-hosted Piston `/execute` endpoint to use it
+instead — it isolates more strongly than the local runner can.
+
+## Theming
+
+The visual direction is a swap of one CSS import. `apps/web/src/styles/globals.css`
+imports a theme file; `themes/leetcode.css` is active and `themes/space.css` is
+the original starfield direction. Both define the same semantic tokens, so no
+component changes when you switch.

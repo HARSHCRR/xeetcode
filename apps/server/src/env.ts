@@ -31,6 +31,16 @@ export const env = {
    * from the bundled bank so local development needs no database setup.
    */
   databaseUrl: process.env.DATABASE_URL,
+
+  /**
+   * A Piston `/execute` endpoint to judge against.
+   *
+   * Unset by default: the public instance (emkc.org) went whitelist-only in
+   * February 2026, so submissions run in the local sandboxed process instead.
+   * Point this at a self-hosted Piston to use it — it isolates far better than
+   * the local runner can.
+   */
+  pistonUrl: process.env.PISTON_URL,
 } as const;
 
 export const isProduction = env.nodeEnv === 'production';

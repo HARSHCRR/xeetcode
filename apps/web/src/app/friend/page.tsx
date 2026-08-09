@@ -37,12 +37,12 @@ export default function FriendLobbyPage() {
   if (status === 'hosting' && lobbyCode) {
     return (
       <main className="mx-auto flex min-h-dvh max-w-xl flex-col justify-center gap-6 px-6 py-16">
-        <h1 className="text-center text-3xl font-bold text-accent-strong">Waiting for a friend</h1>
+        <h1 className="text-center text-2xl font-semibold text-ink">Waiting for a friend</h1>
 
         <Panel className="flex flex-col items-center gap-6 text-center">
           <p className="text-sm text-ink-muted">Share this code — {TOPIC_LABELS[topic]}</p>
 
-          <p className="font-mono text-5xl tracking-[0.4em] text-accent-strong">{lobbyCode}</p>
+          <p className="font-mono text-4xl tracking-[0.4em] text-accent">{lobbyCode}</p>
 
           <Button variant="secondary" onClick={copyCode}>
             {copied ? 'Copied' : 'Copy code'}
@@ -59,7 +59,7 @@ export default function FriendLobbyPage() {
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-xl flex-col justify-center gap-6 px-6 py-16">
-      <h1 className="text-center text-3xl font-bold text-accent-strong">Play with a Friend</h1>
+      <h1 className="text-center text-2xl font-semibold text-ink">Play with a Friend</h1>
 
       {error && <ErrorNote message={error} />}
 

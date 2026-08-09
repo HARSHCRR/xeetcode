@@ -4,6 +4,8 @@ export interface QueuedPlayer {
   socketId: string;
   userId: string;
   name: string;
+  /** Captured at queue time so both sides settle Elo from match-start values. */
+  rating: number;
   topic: TopicSelection;
   joinedAt: number;
 }

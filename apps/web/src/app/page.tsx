@@ -23,8 +23,10 @@ export default function HomePage() {
   return (
     <main className="mx-auto flex min-h-dvh max-w-xl flex-col justify-center gap-8 px-6 py-16">
       <header className="text-center">
-        <h1 className="text-5xl font-bold tracking-tight text-accent-strong">Xeetcode</h1>
-        <p className="mt-3 text-ink-muted">Real-time 1v1 competitive coding.</p>
+        <h1 className="text-4xl font-semibold tracking-tight text-ink">
+          <span className="text-accent">Xeet</span>code
+        </h1>
+        <p className="mt-2 text-sm text-ink-muted">Real-time 1v1 competitive coding.</p>
       </header>
 
       <Panel className="flex flex-col gap-6">

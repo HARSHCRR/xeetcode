@@ -12,6 +12,7 @@ import type {
 import { Server } from 'socket.io';
 import { io as ioClient, type Socket as ClientSocket } from 'socket.io-client';
 
+import { resetPlayersForTesting } from '../players/store.js';
 import { loadProblems } from '../problems/repository.js';
 import { createContext, registerHandlers } from './handlers.js';
 
@@ -45,6 +46,7 @@ async function withServer(body: (harness: Harness) => Promise<void>): Promise<vo
   const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
     cors: { origin: '*' },
   });
+  resetPlayersForTesting();
   registerHandlers(io, createContext());
 
   const port = await new Promise<number>((resolve) => {
@@ -97,8 +99,8 @@ test('two players queueing the same topic land in the same match', async () => {
     const aliceMatch = nextEvent<MatchFoundPayload>(alice, 'match:found');
     const bobMatch = nextEvent<MatchFoundPayload>(bob, 'match:found');
 
-    alice.emit('queue:join', { name: 'alice', topic: 'arrays' });
-    bob.emit('queue:join', { name: 'bob', topic: 'arrays' });
+    alice.emit('queue:join', { playerId: crypto.randomUUID(), name: 'alice', topic: 'arrays' });
+    bob.emit('queue:join', { playerId: crypto.randomUUID(), name: 'bob', topic: 'arrays' });
 
     const [a, b] = await Promise.all([aliceMatch, bobMatch]);
 
@@ -117,8 +119,8 @@ test('the problem sent to clients never includes hidden test cases', async () =>
     const two = await connect();
 
     const found = nextEvent<MatchFoundPayload>(one, 'match:found');
-    one.emit('queue:join', { name: 'one', topic: 'strings' });
-    two.emit('queue:join', { name: 'two', topic: 'strings' });
+    one.emit('queue:join', { playerId: crypto.randomUUID(), name: 'one', topic: 'strings' });
+    two.emit('queue:join', { playerId: crypto.randomUUID(), name: 'two', topic: 'strings' });
 
     const payload = await found;
     assert.ok(!('testCases' in payload.problem), 'hidden tests must not cross the wire');
@@ -131,10 +133,10 @@ test('a player queueing a different topic is not matched', async () => {
     const strings = await connect();
 
     const waiting = nextEvent(arrays, 'queue:waiting');
-    arrays.emit('queue:join', { name: 'arrays-fan', topic: 'arrays' });
+    arrays.emit('queue:join', { playerId: crypto.randomUUID(), name: 'arrays-fan', topic: 'arrays' });
     await waiting;
 
-    strings.emit('queue:join', { name: 'strings-fan', topic: 'strings' });
+    strings.emit('queue:join', { playerId: crypto.randomUUID(), name: 'strings-fan', topic: 'strings' });
 
     await assert.rejects(
       () => nextEvent<MatchFoundPayload>(arrays, 'match:found', 500),
@@ -150,10 +152,10 @@ test('a random-queued player is not pulled into a topic queue', async () => {
     const anyTopic = await connect();
 
     const waiting = nextEvent(topical, 'queue:waiting');
-    topical.emit('queue:join', { name: 'binary-fan', topic: 'binary_search' });
+    topical.emit('queue:join', { playerId: crypto.randomUUID(), name: 'binary-fan', topic: 'binary_search' });
     await waiting;
 
-    anyTopic.emit('queue:join', { name: 'roulette', topic: 'random' });
+    anyTopic.emit('queue:join', { playerId: crypto.randomUUID(), name: 'roulette', topic: 'random' });
 
     await assert.rejects(
       () => nextEvent<MatchFoundPayload>(topical, 'match:found', 500),
@@ -169,14 +171,14 @@ test('a friend joining by lobby code reaches the same match as the host', async 
     const friend = await connect();
 
     const created = nextEvent<LobbyCreatedPayload>(host, 'lobby:created');
-    host.emit('lobby:create', { name: 'host', topic: 'arrays' });
+    host.emit('lobby:create', { playerId: crypto.randomUUID(), name: 'host', topic: 'arrays' });
     const { code } = await created;
 
     assert.equal(code.length, 6);
 
     const hostMatch = nextEvent<MatchFoundPayload>(host, 'match:found');
     const friendMatch = nextEvent<MatchFoundPayload>(friend, 'match:found');
-    friend.emit('lobby:join', { name: 'friend', code });
+    friend.emit('lobby:join', { playerId: crypto.randomUUID(), name: 'friend', code });
 
     const [h, f] = await Promise.all([hostMatch, friendMatch]);
 
@@ -194,11 +196,11 @@ test('lobby codes are accepted case-insensitively', async () => {
     const friend = await connect();
 
     const created = nextEvent<LobbyCreatedPayload>(host, 'lobby:created');
-    host.emit('lobby:create', { name: 'host', topic: 'random' });
+    host.emit('lobby:create', { playerId: crypto.randomUUID(), name: 'host', topic: 'random' });
     const { code } = await created;
 
     const friendMatch = nextEvent<MatchFoundPayload>(friend, 'match:found');
-    friend.emit('lobby:join', { name: 'friend', code: code.toLowerCase() });
+    friend.emit('lobby:join', { playerId: crypto.randomUUID(), name: 'friend', code: code.toLowerCase() });
 
     await friendMatch; // rejects on timeout if the lowercase code was refused
   });
@@ -209,7 +211,7 @@ test('an unknown lobby code returns an error rather than hanging', async () => {
     const stranger = await connect();
 
     const failure = nextEvent<LobbyErrorPayload>(stranger, 'lobby:error');
-    stranger.emit('lobby:join', { name: 'stranger', code: 'ZZZZZZ' });
+    stranger.emit('lobby:join', { playerId: crypto.randomUUID(), name: 'stranger', code: 'ZZZZZZ' });
 
     const { message } = await failure;
     assert.match(message, /invalid|expired/i);
@@ -223,15 +225,15 @@ test('a lobby code cannot be reused by a third player', async () => {
     const gatecrasher = await connect();
 
     const created = nextEvent<LobbyCreatedPayload>(host, 'lobby:created');
-    host.emit('lobby:create', { name: 'host', topic: 'arrays' });
+    host.emit('lobby:create', { playerId: crypto.randomUUID(), name: 'host', topic: 'arrays' });
     const { code } = await created;
 
     const friendMatch = nextEvent<MatchFoundPayload>(friend, 'match:found');
-    friend.emit('lobby:join', { name: 'friend', code });
+    friend.emit('lobby:join', { playerId: crypto.randomUUID(), name: 'friend', code });
     await friendMatch;
 
     const failure = nextEvent<LobbyErrorPayload>(gatecrasher, 'lobby:error');
-    gatecrasher.emit('lobby:join', { name: 'gatecrasher', code });
+    gatecrasher.emit('lobby:join', { playerId: crypto.randomUUID(), name: 'gatecrasher', code });
 
     const { message } = await failure;
     assert.match(message, /invalid|expired/i);
@@ -244,7 +246,7 @@ test('cancelling removes a player from the queue', async () => {
     const later = await connect();
 
     const waiting = nextEvent(quitter, 'queue:waiting');
-    quitter.emit('queue:join', { name: 'quitter', topic: 'strings' });
+    quitter.emit('queue:join', { playerId: crypto.randomUUID(), name: 'quitter', topic: 'strings' });
     await waiting;
 
     quitter.emit('queue:leave');
@@ -252,9 +254,86 @@ test('cancelling removes a player from the queue', async () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     const stillWaiting = nextEvent(later, 'queue:waiting');
-    later.emit('queue:join', { name: 'later', topic: 'strings' });
+    later.emit('queue:join', { playerId: crypto.randomUUID(), name: 'later', topic: 'strings' });
 
     // If the cancel didn't take, these two would have been paired instead.
     await stillWaiting;
+  });
+});
+
+test('submitting notifies the opponent without leaking the verdict', async () => {
+  await withServer(async ({ connect }) => {
+    const alice = await connect();
+    const bob = await connect();
+
+    const found = nextEvent<MatchFoundPayload>(alice, 'match:found');
+    alice.emit('queue:join', { playerId: crypto.randomUUID(), name: 'alice', topic: 'arrays' });
+    bob.emit('queue:join', { playerId: crypto.randomUUID(), name: 'bob', topic: 'arrays' });
+    const match = await found;
+
+    const opponentNotice = nextEvent<{ attemptCount: number }>(bob, 'match:opponentSubmitted', 15000);
+    const ownVerdict = nextEvent<Record<string, unknown>>(alice, 'match:submissionResult', 15000);
+
+    alice.emit('match:submit', { matchId: match.matchId, code: 'function nope() {}' });
+
+    const notice = await opponentNotice;
+    assert.equal(notice.attemptCount, 1);
+    // The opponent learns an attempt happened and nothing else.
+    assert.deepEqual(Object.keys(notice), ['attemptCount']);
+
+    const verdict = await ownVerdict;
+    assert.equal(verdict.passed, false);
+    assert.ok(verdict.cooldownUntil, 'a failed attempt should start a cooldown');
+  });
+});
+
+test('chat reaches both players and is tagged with the sender', async () => {
+  await withServer(async ({ connect }) => {
+    const alice = await connect();
+    const bob = await connect();
+
+    const found = nextEvent<MatchFoundPayload>(alice, 'match:found');
+    alice.emit('queue:join', { playerId: crypto.randomUUID(), name: 'alice', topic: 'strings' });
+    bob.emit('queue:join', { playerId: crypto.randomUUID(), name: 'bob', topic: 'strings' });
+    const match = await found;
+
+    const toBob = nextEvent<{ from: string; text: string; fromUserId: string }>(bob, 'chat:message');
+    alice.emit('chat:message', { matchId: match.matchId, text: 'good luck' });
+
+    const message = await toBob;
+    assert.equal(message.text, 'good luck');
+    assert.equal(message.from, 'alice');
+    assert.equal(message.fromUserId, match.userId);
+  });
+});
+
+test('leaving hands the win to the opponent and moves both ratings', async () => {
+  await withServer(async ({ connect }) => {
+    const alice = await connect();
+    const bob = await connect();
+
+    const aliceFound = nextEvent<MatchFoundPayload>(alice, 'match:found');
+    const bobFound = nextEvent<MatchFoundPayload>(bob, 'match:found');
+    alice.emit('queue:join', { playerId: crypto.randomUUID(), name: 'alice', topic: 'arrays' });
+    bob.emit('queue:join', { playerId: crypto.randomUUID(), name: 'bob', topic: 'arrays' });
+    const [a] = await Promise.all([aliceFound, bobFound]);
+
+    const aliceEnd = nextEvent<Record<string, number | string>>(alice, 'match:end', 10000);
+    const bobEnd = nextEvent<Record<string, number | string>>(bob, 'match:end', 10000);
+
+    alice.emit('match:leave', { matchId: a.matchId });
+
+    const [aliceResult, bobResult] = await Promise.all([aliceEnd, bobEnd]);
+
+    assert.equal(bobResult.result, 'win');
+    assert.equal(aliceResult.result, 'loss');
+    // Evenly matched players start at 1200, so the swing is half the K-factor.
+    assert.equal(bobResult.ratingChange, 16);
+    assert.equal(aliceResult.ratingChange, -16);
+    assert.equal(
+      Number(bobResult.ratingChange) + Number(aliceResult.ratingChange),
+      0,
+      'Elo must be zero-sum',
+    );
   });
 });
