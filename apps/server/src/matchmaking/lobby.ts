@@ -8,6 +8,7 @@ export interface Lobby {
   hostSocketId: string;
   hostUserId: string;
   hostName: string;
+  hostRating: number;
   topic: TopicSelection;
   createdAt: number;
 }

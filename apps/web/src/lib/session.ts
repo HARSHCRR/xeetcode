@@ -8,6 +8,7 @@
 
 const NAME_KEY = 'xeetcode:name';
 const MATCH_KEY = 'xeetcode:match';
+const PLAYER_ID_KEY = 'xeetcode:playerId';
 
 export interface StoredMatch {
   matchId: string;
@@ -41,6 +42,27 @@ function clearStorage(key: string): void {
   } catch {
     // Ignore.
   }
+}
+
+/**
+ * Stable identity for this browser, minted once and reused forever.
+ *
+ * This is what ties a player to their Elo across matches. It's not a security
+ * boundary — anyone can invent one — but there's no auth in this phase, and a
+ * rating that resets every visit would be meaningless.
+ */
+export function getPlayerId(): string {
+  const existing = readStorage(PLAYER_ID_KEY);
+  if (existing) return existing;
+
+  const id =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : // Older Safari: good enough for a non-security identifier.
+        `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+
+  writeStorage(PLAYER_ID_KEY, id);
+  return id;
 }
 
 export const getPlayerName = (): string => readStorage(NAME_KEY) ?? '';

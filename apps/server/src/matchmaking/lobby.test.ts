@@ -9,6 +9,7 @@ const host = (socketId = 'host-socket') => ({
   hostSocketId: socketId,
   hostUserId: 'host-user',
   hostName: 'alice',
+  hostRating: 1200,
   topic: 'arrays' as const,
 });
 

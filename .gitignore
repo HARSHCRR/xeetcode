@@ -32,3 +32,6 @@ yarn-error.log*
 
 # test output
 coverage/
+
+# Monaco assets are copied in at build time
+apps/web/public/monaco/

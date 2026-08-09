@@ -95,18 +95,27 @@ export interface PublicProblem {
 // Client -> Server events
 // ---------------------------------------------------------------------------
 
-export interface QueueJoinPayload {
+/**
+ * Identity the browser carries into every entry point.
+ *
+ * `playerId` is generated once and kept in localStorage, so a returning player
+ * keeps their rating across matches. It's not a security boundary — there's no
+ * auth yet — just a stable handle for their Elo.
+ */
+export interface PlayerIdentity {
+  playerId: string;
   name: string;
+}
+
+export interface QueueJoinPayload extends PlayerIdentity {
   topic: TopicSelection;
 }
 
-export interface LobbyCreatePayload {
-  name: string;
+export interface LobbyCreatePayload extends PlayerIdentity {
   topic: TopicSelection;
 }
 
-export interface LobbyJoinPayload {
-  name: string;
+export interface LobbyJoinPayload extends PlayerIdentity {
   code: string;
 }
 
@@ -160,10 +169,12 @@ export interface QueueWaitingPayload {
 
 export interface MatchFoundPayload {
   matchId: string;
-  /** Identity assigned by the server; the client persists this to rejoin. */
+  /** Echoes the caller's `playerId`; persisted client-side to rejoin. */
   userId: string;
   problem: PublicProblem;
   opponentName: string;
+  rating: number;
+  opponentRating: number;
   mode: MatchMode;
   /** Epoch ms. */
   startedAt: number;
@@ -191,13 +202,18 @@ export interface SubmissionResultPayload {
 
 export interface MatchStatePayload {
   matchId: string;
+  userId: string;
   problem: PublicProblem;
   opponentName: string;
+  rating: number;
+  opponentRating: number;
   mode: MatchMode;
   startedAt: number;
   endsAt: number;
   attemptCount: number;
   opponentAttemptCount: number;
+  /** The player's last submitted source, so a refresh doesn't lose their work. */
+  lastCode?: string;
   chatHistory: ChatMessagePayload[];
 }
 
@@ -206,12 +222,16 @@ export interface MatchEndPayload {
   result: MatchResult;
   status: MatchStatus;
   winnerId: string | null;
+  /** Name of whoever solved it, for the result screen. */
+  winnerName: string | null;
   ratingBefore: number;
   ratingAfter: number;
   ratingChange: number;
 }
 
 export interface ChatMessagePayload {
+  /** Sender's playerId, so the client can tell its own messages apart. */
+  fromUserId: string;
   from: string;
   text: string;
   /** Epoch ms. */

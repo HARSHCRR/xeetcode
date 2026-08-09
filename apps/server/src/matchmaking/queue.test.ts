@@ -10,6 +10,7 @@ const player = (name: string, topic: TopicSelection) => ({
   socketId: `socket-${++counter}`,
   userId: `user-${counter}`,
   name,
+  rating: 1200,
   topic,
   joinedAt: Date.now(),
 });

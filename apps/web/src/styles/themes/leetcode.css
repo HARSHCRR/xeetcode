@@ -1,0 +1,43 @@
+/**
+ * LeetCode-style theme.
+ *
+ * Same semantic token names as `space.css`, so swapping the import in
+ * globals.css restyles every component without touching component code —
+ * the reason colour was never hardcoded in the first place.
+ *
+ * Character: near-black neutral surfaces, no chrome, content-forward. Accent is
+ * the familiar orange; verdicts read green/red; difficulty gets its own trio.
+ */
+
+@theme {
+  /* Surfaces — flat greys, panels barely lifted off the page. */
+  --color-bg: #1a1a1a;
+  --color-surface: #282828;
+  --color-surface-raised: #303030;
+  --color-edge: #3e3e3e;
+
+  /* Text */
+  --color-ink: #eff1f6;
+  --color-ink-muted: #b3b3b3;
+  --color-ink-faint: #808080;
+
+  /* Accent */
+  --color-accent: #ffa116;
+  --color-accent-strong: #ffb84d;
+  --color-accent-soft: #3a2c14;
+  --color-cyan: #61dafb;
+
+  /* Verdicts */
+  --color-win: #2cbb5d;
+  --color-lose: #ef4743;
+  --color-warn: #ffb800;
+
+  /* Difficulty — LeetCode's own three-step scale. */
+  --color-easy: #00b8a3;
+  --color-medium: #ffb800;
+  --color-hard: #ef4743;
+
+  /* Flat theme: no glow, but the tokens must exist for components that use them. */
+  --glow-accent: none;
+  --glow-cyan: none;
+}
