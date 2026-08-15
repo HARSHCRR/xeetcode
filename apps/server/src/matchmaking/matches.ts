@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { MATCH_DURATION_MS } from '@xeetcode/shared';
+import { matchScore } from '@xeetcode/shared';
 import type { ChatMessagePayload, MatchMode, Problem } from '@xeetcode/shared';
 
 export interface MatchPlayer {
@@ -9,6 +9,9 @@ export interface MatchPlayer {
   /** Current socket, or null while disconnected. */
   socketId: string | null;
   attemptCount: number;
+  /** Best tests passed across all attempts — what the score is built from. */
+  bestPassedCount: number;
+  solved: boolean;
   ratingBefore: number;
   /** Epoch ms before which further submissions are rejected. */
   cooldownUntil: number;
@@ -22,11 +25,21 @@ export interface LiveMatch {
   mode: MatchMode;
   players: [MatchPlayer, MatchPlayer];
   startedAt: number;
-  endsAt: number;
+  /** Null for an untimed match. */
+  endsAt: number | null;
   chat: ChatMessagePayload[];
   /** Set once the match is over, so late submissions can't resurrect it. */
   finished: boolean;
   timer?: NodeJS.Timeout;
+}
+
+/** Score for one player in a match. */
+export function playerScore(match: LiveMatch, player: MatchPlayer): number {
+  return matchScore({
+    bestPassedCount: player.bestPassedCount,
+    totalTests: match.problem.testCases.length,
+    attempts: player.attemptCount,
+  });
 }
 
 /**
@@ -43,23 +56,24 @@ export class MatchRegistry {
       Pick<MatchPlayer, 'userId' | 'name' | 'socketId' | 'ratingBefore'>,
       Pick<MatchPlayer, 'userId' | 'name' | 'socketId' | 'ratingBefore'>,
     ];
-    durationMs?: number;
-    /** Invoked when the clock runs out with nobody having solved it. */
+    /** Null creates an untimed match. */
+    durationMs: number | null;
+    /** Invoked when a timed match runs out of clock. */
     onExpire?: (match: LiveMatch) => void;
   }): LiveMatch {
     const startedAt = Date.now();
-    const duration = options.durationMs ?? MATCH_DURATION_MS;
 
+    const blank = { attemptCount: 0, bestPassedCount: 0, solved: false, cooldownUntil: 0 };
     const match: LiveMatch = {
       id: randomUUID(),
       problem: options.problem,
       mode: options.mode,
       players: [
-        { ...options.players[0], attemptCount: 0, cooldownUntil: 0 },
-        { ...options.players[1], attemptCount: 0, cooldownUntil: 0 },
+        { ...options.players[0], ...blank },
+        { ...options.players[1], ...blank },
       ],
       startedAt,
-      endsAt: startedAt + duration,
+      endsAt: options.durationMs === null ? null : startedAt + options.durationMs,
       chat: [],
       finished: false,
     };
@@ -67,10 +81,10 @@ export class MatchRegistry {
     // The server owns the clock. The client renders a countdown from `endsAt`,
     // but only this timer can actually end the match — otherwise a player could
     // stall their own clock by tampering with the page.
-    if (options.onExpire) {
+    if (options.durationMs !== null && options.onExpire) {
       match.timer = setTimeout(() => {
         if (!match.finished) options.onExpire?.(match);
-      }, duration);
+      }, options.durationMs);
       match.timer.unref?.();
     }
 

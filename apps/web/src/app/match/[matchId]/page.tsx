@@ -3,14 +3,15 @@
 import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 
-import { TOPIC_LABELS } from '@xeetcode/shared';
-import type { Difficulty } from '@xeetcode/shared';
+import { LANGUAGE_LABELS, TOPIC_LABELS } from '@xeetcode/shared';
+import type { Difficulty, Language } from '@xeetcode/shared';
 
 import { ChatPanel } from '@/components/ChatPanel';
 import { CodeEditor } from '@/components/CodeEditor';
 import { useGame } from '@/components/GameProvider';
 import { MatchTimer } from '@/components/MatchTimer';
 import { ResultScreen } from '@/components/ResultScreen';
+import { SampleResults } from '@/components/SampleResults';
 import { SubmitButton } from '@/components/SubmitButton';
 import { VerdictPanel } from '@/components/VerdictPanel';
 import { getStoredMatch } from '@/lib/session';
@@ -35,12 +36,15 @@ export default function MatchRoomPage() {
     match,
     result,
     submission,
+    runResult,
     judging,
+    running,
     chat,
     opponentOnline,
     connected,
     rejoinMatch,
     submitCode,
+    runCode,
     sendChat,
     leaveMatch,
     reset,
@@ -51,14 +55,26 @@ export default function MatchRoomPage() {
   const [chatCollapsed, setChatCollapsed] = useState(false);
   const [splitPercent, setSplitPercent] = useState(42);
   const [seededFor, setSeededFor] = useState<string | null>(null);
+  const [language, setLanguage] = useState<Language>('cpp');
+
+  // Languages this problem actually ships a starter for.
+  const available = (Object.keys(match?.problem.starters ?? {}) as Language[]).sort();
+  const activeLanguage = available.includes(language) ? language : (available[0] ?? 'javascript');
 
   // Seed the editor once per match: the player's own draft if they've submitted
   // before, otherwise the starter code. Adjusting state during render (rather
   // than in an effect) is React's sanctioned way to reset on a prop change, and
   // avoids a wasted render pass showing an empty editor.
-  if (match && seededFor !== match.matchId) {
-    setSeededFor(match.matchId);
-    setCode(match.lastCode ?? match.problem.starterCode);
+  // Re-seed when the match changes or the player switches language — their
+  // draft is language-specific, so carrying it across would be nonsense.
+  const seedKey = match ? `${match.matchId}:${activeLanguage}` : null;
+  if (match && seedKey && seededFor !== seedKey) {
+    setSeededFor(seedKey);
+    setCode(
+      (seededFor === null ? match.lastCode : undefined) ??
+        match.problem.starters[activeLanguage] ??
+        '',
+    );
   }
 
   // Restore state after a refresh.
@@ -108,9 +124,10 @@ export default function MatchRoomPage() {
         <div className="flex min-w-0 items-center gap-3">
           <span className="font-semibold text-accent">Xeetcode</span>
           <span className="hidden truncate text-sm text-ink-muted sm:inline">
-            {playerName} <span className="text-ink-faint">({match.rating})</span>
+            {playerName} <span className="font-mono text-win">{match.score}</span>
             <span className="mx-2 text-ink-faint">vs</span>
-            {match.opponentName} <span className="text-ink-faint">({match.opponentRating})</span>
+            {match.opponentName}{' '}
+            <span className="font-mono text-ink">{match.opponentScore}</span>
           </span>
         </div>
 
@@ -118,10 +135,14 @@ export default function MatchRoomPage() {
           {!opponentOnline && <span className="text-xs text-warn">Opponent disconnected</span>}
           {match.opponentAttemptCount > 0 && (
             <span className="hidden text-xs text-ink-faint sm:inline">
-              Opponent submitted ×{match.opponentAttemptCount}
+              Opponent tried ×{match.opponentAttemptCount}
             </span>
           )}
-          <MatchTimer endsAt={match.endsAt} />
+          {match.endsAt === null ? (
+            <span className="text-xs text-ink-faint">Untimed</span>
+          ) : (
+            <MatchTimer endsAt={match.endsAt} />
+          )}
           <button
             onClick={backToLobby}
             className="rounded-md px-3 py-1.5 text-sm text-ink-muted transition-colors hover:text-ink"
@@ -151,6 +172,29 @@ export default function MatchRoomPage() {
             <div className="mt-6 whitespace-pre-wrap text-sm leading-7 text-ink-muted">
               {problem.description}
             </div>
+
+            {problem.sampleCases.length > 0 && (
+              <div className="mt-6">
+                <h2 className="text-xs uppercase tracking-wider text-ink-faint">Examples</h2>
+                <div className="mt-2 space-y-2">
+                  {problem.sampleCases.map((sample, index) => (
+                    <div
+                      key={index}
+                      className="rounded-md border border-edge bg-surface-raised p-3 font-mono text-xs"
+                    >
+                      <p className="text-ink-muted">
+                        <span className="text-ink-faint">in </span>
+                        {JSON.stringify(sample.input).slice(1, -1)}
+                      </p>
+                      <p className="mt-1 text-ink">
+                        <span className="text-ink-faint">out </span>
+                        {JSON.stringify(sample.expected)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="shrink-0">
@@ -175,19 +219,52 @@ export default function MatchRoomPage() {
         {/* Editor + verdict */}
         <section className="flex min-h-0 flex-1 flex-col">
           <div className="flex shrink-0 items-center justify-between border-b border-edge bg-surface px-4 py-2">
-            <span className="font-mono text-xs text-ink-faint">JavaScript</span>
+            <select
+              value={activeLanguage}
+              onChange={(event) => setLanguage(event.target.value as Language)}
+              aria-label="Language"
+              className="rounded border border-edge bg-surface-raised px-2 py-1 text-xs text-ink outline-none focus:border-accent"
+            >
+              {available.map((option) => (
+                <option key={option} value={option}>
+                  {LANGUAGE_LABELS[option]}
+                </option>
+              ))}
+            </select>
+            <span className="ml-auto mr-3 text-xs text-ink-faint">
+              Score <span className="font-mono text-ink">{match.score}</span> · tried{' '}
+              {match.attemptCount}
+            </span>
+            <button
+              onClick={() => runCode(code, activeLanguage)}
+              disabled={running || judging || Boolean(result)}
+              className="rounded-md border border-edge bg-surface-raised px-4 py-1.5 text-sm text-ink transition-colors hover:border-accent disabled:opacity-40"
+            >
+              {running ? 'Running…' : 'Run'}
+            </button>
             <SubmitButton
-              onSubmit={() => submitCode(code)}
+              onSubmit={() => submitCode(code, activeLanguage)}
               judging={judging}
+              solved={match.solved}
               finished={Boolean(result)}
               {...(submission?.cooldownUntil ? { cooldownUntil: submission.cooldownUntil } : {})}
             />
           </div>
 
           <div className="min-h-0 flex-1">
-            <CodeEditor value={code} onChange={setCode} readOnly={Boolean(result)} />
+            <CodeEditor
+              value={code}
+              onChange={setCode}
+              language={activeLanguage}
+              readOnly={Boolean(result)}
+            />
           </div>
 
+          <SampleResults
+            samples={problem.sampleCases}
+            result={runResult}
+            running={running}
+          />
           <VerdictPanel submission={submission} judging={judging} />
         </section>
       </div>

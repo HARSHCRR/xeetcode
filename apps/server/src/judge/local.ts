@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 
-import type { Problem } from '@xeetcode/shared';
+import type { Problem, TestCase } from '@xeetcode/shared';
 
 import { buildHarness, parseHarnessOutput } from './harness.js';
 import type { JudgeVerdict } from './types.js';
@@ -29,9 +29,14 @@ const MEMORY_LIMIT_MB = 128;
  * The code goes in via `-e` rather than a temp file because `--permission`
  * blocks the module loader's own filesystem probing.
  */
-export function judgeLocally(problem: Problem, userCode: string): Promise<JudgeVerdict> {
-  const total = problem.testCases.length;
-  const harness = buildHarness(problem, userCode);
+export function judgeLocally(
+  problem: Problem,
+  userCode: string,
+  cases: TestCase[] = problem.testCases,
+  revealActual = false,
+): Promise<JudgeVerdict> {
+  const total = cases.length;
+  const harness = buildHarness(problem, userCode, cases, revealActual);
 
   return new Promise((resolve) => {
     execFile(
@@ -47,7 +52,7 @@ export function judgeLocally(problem: Problem, userCode: string): Promise<JudgeV
       (error, stdout, stderr) => {
         // `killed` means the timeout fired — almost always an infinite loop.
         if (error && 'killed' in error && error.killed) {
-          resolve({ passed: false, passedCount: 0, totalCount: total, errorKind: 'timeout' });
+          resolve({ passed: false, passedCount: 0, totalCount: total, errorKind: 'timeout', cases: [] });
           return;
         }
 
@@ -57,12 +62,12 @@ export function judgeLocally(problem: Problem, userCode: string): Promise<JudgeV
           // No verdict line: the code threw before the runner could report.
           // stderr may echo the player's own data, so it is never forwarded.
           const kind = stderr.includes('SyntaxError') ? 'compile_error' : 'runtime_error';
-          resolve({ passed: false, passedCount: 0, totalCount: total, errorKind: kind });
+          resolve({ passed: false, passedCount: 0, totalCount: total, errorKind: kind, cases: [] });
           return;
         }
 
         if (parsed.error) {
-          resolve({ passed: false, passedCount: 0, totalCount: total, errorKind: 'compile_error' });
+          resolve({ passed: false, passedCount: 0, totalCount: total, errorKind: 'compile_error', cases: [] });
           return;
         }
 
@@ -74,6 +79,7 @@ export function judgeLocally(problem: Problem, userCode: string): Promise<JudgeV
           passedCount,
           totalCount: total,
           ...(firstFailure === -1 ? {} : { failedTestIndex: firstFailure + 1 }),
+          cases: revealActual ? parsed.results : [],
         });
       },
     );

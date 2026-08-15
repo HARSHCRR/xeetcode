@@ -18,8 +18,9 @@ const probe: Problem = {
   topic: 'arrays',
   difficulty: 'easy',
   description: '',
-  functionSignature: 'function probe()',
-  starterCode: '',
+  starters: { javascript: '' },
+  sampleCases: [],
+  jsFunctionName: 'probe',
   testCases: [{ input: [], expected: true }],
 };
 

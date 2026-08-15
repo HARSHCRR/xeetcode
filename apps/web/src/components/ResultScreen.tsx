@@ -42,13 +42,26 @@ export function ResultScreen({
 
         <p className="mt-2 text-sm text-ink-muted">
           {drawn
-            ? `Neither you nor ${opponentName} solved it in time.`
+            ? 'Scores were level.'
             : result.winnerName
-              ? `${result.winnerName} solved it first.`
+              ? `${result.winnerName} took it.`
               : 'The match ended.'}
         </p>
 
-        <div className="mt-6 rounded-md border border-edge bg-surface-raised p-4">
+        <div className="mt-6 grid grid-cols-2 gap-3">
+          <div className="rounded-md border border-edge bg-surface-raised p-3">
+            <p className="text-xs uppercase tracking-wider text-ink-faint">You</p>
+            <p className="mt-1 font-mono text-2xl text-ink">{result.score}</p>
+          </div>
+          <div className="rounded-md border border-edge bg-surface-raised p-3">
+            <p className="truncate text-xs uppercase tracking-wider text-ink-faint">
+              {opponentName}
+            </p>
+            <p className="mt-1 font-mono text-2xl text-ink-muted">{result.opponentScore}</p>
+          </div>
+        </div>
+
+        <div className="mt-3 rounded-md border border-edge bg-surface-raised p-4">
           <p className="text-xs uppercase tracking-wider text-ink-faint">Rating</p>
           <p className="mt-1 flex items-baseline justify-center gap-2">
             <span className="font-mono text-2xl text-ink">{ratingAfter}</span>

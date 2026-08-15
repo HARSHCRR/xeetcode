@@ -10,8 +10,20 @@
 // Domain
 // ---------------------------------------------------------------------------
 
-/** Topics a problem can belong to. `random` is a queue selection, not a topic. */
-export const PROBLEM_TOPICS = ['arrays', 'strings', 'binary_search'] as const;
+/** Categories a problem can belong to — display metadata only. */
+export const PROBLEM_TOPICS = [
+  'arrays',
+  'strings',
+  'binary_search',
+  'linked_list',
+  'trees',
+  'graphs',
+  'dynamic_programming',
+  'intervals',
+  'matrix',
+  'heap',
+  'bit_manipulation',
+] as const;
 export type ProblemTopic = (typeof PROBLEM_TOPICS)[number];
 
 /** What a player can pick before queueing. `random` draws from every topic. */
@@ -23,6 +35,14 @@ export const TOPIC_LABELS: Record<TopicSelection, string> = {
   arrays: 'Arrays',
   strings: 'Strings',
   binary_search: 'Binary Search',
+  linked_list: 'Linked List',
+  trees: 'Trees',
+  graphs: 'Graphs',
+  dynamic_programming: 'Dynamic Programming',
+  intervals: 'Intervals',
+  matrix: 'Matrix',
+  heap: 'Heap',
+  bit_manipulation: 'Bit Manipulation',
   random: 'Random',
 };
 
@@ -32,6 +52,39 @@ export function isTopicSelection(value: unknown): value is TopicSelection {
 }
 
 export type Difficulty = 'easy' | 'medium' | 'hard';
+
+/** Languages a player can write a solution in. */
+export const LANGUAGES = ['cpp', 'javascript'] as const;
+export type Language = (typeof LANGUAGES)[number];
+
+export const LANGUAGE_LABELS: Record<Language, string> = {
+  cpp: 'C++',
+  javascript: 'JavaScript',
+};
+
+export function isLanguage(value: unknown): value is Language {
+  return typeof value === 'string' && (LANGUAGES as readonly string[]).includes(value);
+}
+
+/**
+ * Value shapes a problem's parameters and return can take.
+ *
+ * The C++ harness needs static types to emit literals and declarations; the
+ * JavaScript harness ignores these and works straight off the JSON.
+ */
+export type ValueType =
+  | 'int'
+  | 'double'
+  | 'bool'
+  | 'string'
+  | 'int[]'
+  | 'double[]'
+  | 'string[]'
+  | 'int[][]'
+  | 'string[][]'
+  | 'list'
+  | 'list[]'
+  | 'tree';
 
 /**
  * A single hidden test case. Never sent to the browser — it lives in the
@@ -43,9 +96,30 @@ export interface TestCase {
   expected: unknown;
 }
 
+/** Names of harness helpers that convert JSON test data to real structures. */
+export type ArgAdapter = 'buildList' | 'buildLists' | 'buildTree';
+export type ResultAdapter = 'listToArray' | 'treeToArray';
+
 /** Full server-side problem, including the hidden tests. */
 export interface Problem extends PublicProblem {
+  /** Hidden edge-case set, run only by "Submit". */
   testCases: TestCase[];
+  /** Parameter and return shapes, required to compile the C++ harness. */
+  cppSignature?: { params: ValueType[]; returns: ValueType };
+  /** Method name on the C++ `Solution` class. */
+  cppFunctionName?: string;
+  /** Name of the JavaScript function a submission must define. */
+  jsFunctionName?: string;
+  /**
+   * Per-argument conversion applied before calling the solution. `null` leaves
+   * that argument as-is. Lets a test case store a linked list as `[1,2,3]`
+   * while the solution still receives real nodes.
+   */
+  argAdapters?: (ArgAdapter | null)[];
+  /** Conversion applied to the return value before comparison. */
+  resultAdapter?: ResultAdapter;
+  /** Compare ignoring order, for problems whose answer is a set of groups. */
+  unorderedResult?: boolean;
 }
 
 /**
@@ -64,8 +138,9 @@ export function toPublicProblem(problem: Problem): PublicProblem {
     topic: problem.topic,
     difficulty: problem.difficulty,
     description: problem.description,
-    functionSignature: problem.functionSignature,
-    starterCode: problem.starterCode,
+    starters: problem.starters,
+    // Samples are meant to be visible; the hidden set stays behind.
+    sampleCases: problem.sampleCases,
   };
 }
 
@@ -87,8 +162,13 @@ export interface PublicProblem {
   difficulty: Difficulty;
   /** Markdown. */
   description: string;
-  functionSignature: string;
-  starterCode: string;
+  /** Starter code per language; a problem must offer at least one. */
+  starters: Partial<Record<Language, string>>;
+  /**
+   * Example cases shown in full, with input and expected output. "Run"
+   * executes exactly these, so a player can debug against something concrete.
+   */
+  sampleCases: TestCase[];
 }
 
 // ---------------------------------------------------------------------------
@@ -107,12 +187,18 @@ export interface PlayerIdentity {
   name: string;
 }
 
-export interface QueueJoinPayload extends PlayerIdentity {
-  topic: TopicSelection;
+/**
+ * How long a match runs. Untimed matches end when someone solves the problem;
+ * timed ones run the clock out and compare scores.
+ */
+export interface MatchFormat {
+  timed: boolean;
+  /** Only meaningful when `timed`. One of TIMED_DURATION_MINUTES. */
+  minutes?: number;
 }
 
 export interface LobbyCreatePayload extends PlayerIdentity {
-  topic: TopicSelection;
+  format: MatchFormat;
 }
 
 export interface LobbyJoinPayload extends PlayerIdentity {
@@ -122,6 +208,22 @@ export interface LobbyJoinPayload extends PlayerIdentity {
 export interface MatchSubmitPayload {
   matchId: string;
   code: string;
+  language: Language;
+}
+
+/** "Run" executes only the visible samples and never affects the score. */
+export interface MatchRunPayload {
+  matchId: string;
+  code: string;
+  language: Language;
+}
+
+export interface RunResultPayload {
+  passedCount: number;
+  totalCount: number;
+  cases: { pass: boolean; actual?: string; expected?: string }[];
+  errorKind?: 'runtime_error' | 'timeout' | 'compile_error';
+  errorDetail?: string;
 }
 
 export interface ChatSendPayload {
@@ -139,11 +241,10 @@ export interface MatchLeavePayload {
 }
 
 export interface ClientToServerEvents {
-  'queue:join': (payload: QueueJoinPayload) => void;
-  'queue:leave': () => void;
   'lobby:create': (payload: LobbyCreatePayload) => void;
   'lobby:join': (payload: LobbyJoinPayload) => void;
   'match:submit': (payload: MatchSubmitPayload) => void;
+  'match:run': (payload: MatchRunPayload) => void;
   'match:rejoin': (payload: MatchRejoinPayload) => void;
   'match:leave': (payload: MatchLeavePayload) => void;
   'chat:message': (payload: ChatSendPayload) => void;
@@ -161,12 +262,6 @@ export interface LobbyErrorPayload {
   message: string;
 }
 
-export interface QueueWaitingPayload {
-  topic: TopicSelection;
-  /** How many players are queued for this topic, including the caller. */
-  queueSize: number;
-}
-
 export interface MatchFoundPayload {
   matchId: string;
   /** Echoes the caller's `playerId`; persisted client-side to rejoin. */
@@ -178,13 +273,23 @@ export interface MatchFoundPayload {
   mode: MatchMode;
   /** Epoch ms. */
   startedAt: number;
-  /** Epoch ms. The server is authoritative; the client only renders a countdown. */
-  endsAt: number;
+  /**
+   * Epoch ms, or `null` for an untimed match. The server is authoritative; the
+   * client only renders a countdown from this.
+   */
+  endsAt: number | null;
 }
 
-/** Sent to the opponent. Carries no code and no pass/fail signal. */
+/**
+ * Sent to the opponent after an attempt.
+ *
+ * Carries no code and no pass/fail detail — only the public score, which both
+ * players can see all match, and the attempt count.
+ */
 export interface OpponentSubmittedPayload {
   attemptCount: number;
+  score: number;
+  solved: boolean;
 }
 
 /** Sent only to the player who submitted. */
@@ -192,10 +297,22 @@ export interface SubmissionResultPayload {
   passed: boolean;
   passedCount: number;
   totalCount: number;
+  /** Best tests passed so far, which is what the score is computed from. */
+  bestPassedCount?: number;
+  /** The submitter's score after this attempt. */
+  score?: number;
+  attemptCount?: number;
   /** 1-based index of the first failing test. Never includes its input/output. */
   failedTestIndex?: number;
   /** Sanitized, e.g. "Runtime error" or "Time limit exceeded". */
   errorKind?: 'runtime_error' | 'timeout' | 'compile_error';
+  /** Compiler diagnostics. Safe to show — it is the player's own source. */
+  errorDetail?: string;
+  /**
+   * Per-case detail. Populated only for visible sample cases from "Run";
+   * always empty for a hidden "Submit" set.
+   */
+  cases?: { pass: boolean; actual?: string; expected?: string }[];
   /** Epoch ms before which further submissions are rejected. */
   cooldownUntil?: number;
 }
@@ -209,9 +326,13 @@ export interface MatchStatePayload {
   opponentRating: number;
   mode: MatchMode;
   startedAt: number;
-  endsAt: number;
+  endsAt: number | null;
   attemptCount: number;
   opponentAttemptCount: number;
+  score: number;
+  opponentScore: number;
+  bestPassedCount: number;
+  solved: boolean;
   /** The player's last submitted source, so a refresh doesn't lose their work. */
   lastCode?: string;
   chatHistory: ChatMessagePayload[];
@@ -221,6 +342,9 @@ export interface MatchEndPayload {
   matchId: string;
   result: MatchResult;
   status: MatchStatus;
+  /** Final scores, so the result screen can show how it was decided. */
+  score: number;
+  opponentScore: number;
   winnerId: string | null;
   /** Name of whoever solved it, for the result screen. */
   winnerName: string | null;
@@ -243,13 +367,13 @@ export interface OpponentDisconnectedPayload {
 }
 
 export interface ServerToClientEvents {
-  'queue:waiting': (payload: QueueWaitingPayload) => void;
   'lobby:created': (payload: LobbyCreatedPayload) => void;
   'lobby:error': (payload: LobbyErrorPayload) => void;
   'match:found': (payload: MatchFoundPayload) => void;
   'match:state': (payload: MatchStatePayload) => void;
   'match:opponentSubmitted': (payload: OpponentSubmittedPayload) => void;
   'match:submissionResult': (payload: SubmissionResultPayload) => void;
+  'match:runResult': (payload: RunResultPayload) => void;
   'match:end': (payload: MatchEndPayload) => void;
   'chat:message': (payload: ChatMessagePayload) => void;
   'opponent:disconnected': (payload: OpponentDisconnectedPayload) => void;

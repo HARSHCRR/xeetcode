@@ -13,8 +13,9 @@ const problem = (testCases: Problem['testCases']): Problem => ({
   topic: 'arrays',
   difficulty: 'easy',
   description: '',
-  functionSignature: 'function add(a, b)',
-  starterCode: '',
+  starters: { javascript: '' },
+  sampleCases: [],
+  jsFunctionName: 'add',
   testCases,
 });
 

@@ -10,7 +10,7 @@ const host = (socketId = 'host-socket') => ({
   hostUserId: 'host-user',
   hostName: 'alice',
   hostRating: 1200,
-  topic: 'arrays' as const,
+  format: { timed: true, minutes: 15 },
 });
 
 test('a created lobby has a well-formed code', () => {

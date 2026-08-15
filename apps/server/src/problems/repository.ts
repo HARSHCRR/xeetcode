@@ -4,6 +4,7 @@ import type { Problem, ProblemTopic, TopicSelection } from '@xeetcode/shared';
 
 import { getPool } from '../db/client.js';
 import { PROBLEM_BANK } from './bank.js';
+import { cppFunctionName, startersFor, type SeedProblem } from './types.js';
 
 /**
  * All problems, held in memory for the process lifetime.
@@ -27,22 +28,51 @@ interface ProblemRow {
 }
 
 function fromRow(row: ProblemRow): Problem {
+  return toRuntimeProblem(
+    {
+      slug: row.slug,
+      title: row.title,
+      topic: row.topic,
+      difficulty: row.difficulty,
+      description: row.description,
+      functionSignature: row.function_signature,
+      starterCode: row.starter_code,
+      testCases: row.test_cases,
+    },
+    row.id,
+  );
+}
+
+/** Turns an authored problem into the runtime shape the judge and wire use. */
+export function toRuntimeProblem(problem: SeedProblem, id: string): Problem {
   return {
-    id: row.id,
-    slug: row.slug,
-    title: row.title,
-    topic: row.topic,
-    difficulty: row.difficulty,
-    description: row.description,
-    functionSignature: row.function_signature,
-    starterCode: row.starter_code,
-    testCases: row.test_cases,
+    id,
+    slug: problem.slug,
+    title: problem.title,
+    topic: problem.topic,
+    difficulty: problem.difficulty,
+    description: problem.description,
+    starters: startersFor(problem),
+    // Until a problem gets hand-picked examples, show its first two hidden
+    // cases so "Run" is still useful rather than blank.
+    sampleCases: problem.sampleCases ?? problem.testCases.slice(0, 2),
+    testCases: problem.testCases,
+    jsFunctionName: problem.functionSignature.match(/function\s+(\w+)/)?.[1] ?? 'solution',
+    ...(problem.cppDeclaration
+      ? {
+          cppFunctionName: cppFunctionName(problem.cppDeclaration),
+          ...(problem.cppTypes ? { cppSignature: problem.cppTypes } : {}),
+        }
+      : {}),
+    ...(problem.argAdapters ? { argAdapters: problem.argAdapters } : {}),
+    ...(problem.resultAdapter ? { resultAdapter: problem.resultAdapter } : {}),
+    ...(problem.unorderedResult ? { unorderedResult: true } : {}),
   };
 }
 
 /** The bundled bank, given synthetic ids so it matches the DB-backed shape. */
 function fromBundledBank(): Problem[] {
-  return PROBLEM_BANK.map((problem) => ({ ...problem, id: randomUUID() }));
+  return PROBLEM_BANK.map((problem) => toRuntimeProblem(problem, randomUUID()));
 }
 
 /**

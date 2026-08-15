@@ -29,7 +29,6 @@ app.get('/health', (_req, res) => {
     uptimeSeconds: Math.floor(process.uptime()),
     problems: problemCount(),
     database: isDatabaseConfigured() ? 'configured' : 'not configured',
-    queued: ctx.queue.totalWaiting(),
     openLobbies: ctx.lobbies.size(),
     liveMatches: ctx.matches.size(),
   });

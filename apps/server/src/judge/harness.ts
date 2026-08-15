@@ -1,40 +1,73 @@
-import type { Problem } from '@xeetcode/shared';
+import type { Problem, TestCase } from '@xeetcode/shared';
+
+import { STRUCTURE_PRELUDE } from './prelude.js';
 
 /** Marker the harness prints its JSON verdict behind, so we can find it in stdout. */
 export const RESULT_MARKER = '__XEETCODE_RESULT__';
 
 export interface HarnessResult {
-  results: { pass: boolean }[];
+  results: { pass: boolean; actual?: string; expected?: string }[];
   error?: string;
 }
 
-/**
- * Parses the function name a problem expects, e.g. "function twoSum(a, b)" -> "twoSum".
- */
+/** The JavaScript function a submission must define. */
 export function solutionName(problem: Problem): string {
-  return problem.functionSignature.match(/function\s+(\w+)/)?.[1] ?? 'solution';
+  return problem.jsFunctionName ?? 'solution';
 }
 
 /**
  * Wraps the player's source in a runner that executes every test case and
  * prints one JSON line.
  *
- * A single execution handles all tests, so judging costs one sandbox call
- * rather than one per case — that matters because the judge is a shared public
- * API with rate limits.
+ * A single execution handles all tests, so judging costs one sandbox spawn
+ * rather than one per case.
  *
  * Comparison is structural on JSON, which is why the bank avoids problems that
- * admit several correct answers.
+ * admit several correct answers. Problems whose inputs or outputs are linked
+ * lists or trees name an adapter (see `prelude.ts`) to convert between the JSON
+ * in the test case and the real node structure.
  */
-export function buildHarness(problem: Problem, userCode: string): string {
+export function buildHarness(
+  problem: Problem,
+  userCode: string,
+  caseList: TestCase[] = problem.testCases,
+  revealActual = false,
+): string {
   const fn = solutionName(problem);
-  const cases = JSON.stringify(problem.testCases);
+  const cases = JSON.stringify(caseList);
+  const reveal = JSON.stringify(revealActual);
+  const argAdapters = JSON.stringify(problem.argAdapters ?? null);
+  const resultAdapter = JSON.stringify(problem.resultAdapter ?? null);
+  const unordered = JSON.stringify(Boolean(problem.unorderedResult));
 
-  return `${userCode}
+  return `${STRUCTURE_PRELUDE}
+
+${userCode}
 
 ;(function () {
   const __marker = ${JSON.stringify(RESULT_MARKER)};
   const __cases = ${cases};
+  const __argAdapters = ${argAdapters};
+  const __resultAdapter = ${resultAdapter};
+  const __unordered = ${unordered};
+  const __reveal = ${reveal};
+
+  const __helpers = {
+    buildList: typeof __buildList === 'function' ? __buildList : null,
+    buildLists: typeof __buildLists === 'function' ? __buildLists : null,
+    listToArray: typeof __listToArray === 'function' ? __listToArray : null,
+    buildTree: typeof __buildTree === 'function' ? __buildTree : null,
+    treeToArray: typeof __treeToArray === 'function' ? __treeToArray : null,
+  };
+
+  /** Sorts nested arrays so order-insensitive answers compare equal. */
+  function __canonical(value) {
+    if (Array.isArray(value)) {
+      const mapped = value.map(__canonical);
+      return mapped.slice().sort((a, b) => (JSON.stringify(a) < JSON.stringify(b) ? -1 : 1));
+    }
+    return value;
+  }
 
   function __equal(a, b) {
     if (a === b) return true;
@@ -55,28 +88,51 @@ export function buildHarness(problem: Problem, userCode: string): string {
       }
       return true;
     }
-    // NaN is the one value that isn't equal to itself.
     if (typeof a === 'number' && typeof b === 'number') return Number.isNaN(a) && Number.isNaN(b);
     return false;
   }
 
   if (typeof ${fn} !== 'function') {
-    console.log(__marker + JSON.stringify({
-      results: [],
-      error: 'Define a function named ${fn}.'
-    }));
+    console.log(__marker + JSON.stringify({ results: [], error: 'Define a function named ${fn}.' }));
     return;
   }
 
   const __results = [];
   for (const __case of __cases) {
     try {
-      // Deep-copy arguments so one test mutating an input can't corrupt the next.
-      const __args = JSON.parse(JSON.stringify(__case.input));
-      const __actual = ${fn}.apply(null, __args);
-      __results.push({ pass: __equal(__actual, __case.expected) });
+      // Deep-copy so one test mutating an input can't corrupt the next.
+      let __args = JSON.parse(JSON.stringify(__case.input));
+
+      if (__argAdapters) {
+        __args = __args.map(function (arg, i) {
+          const name = __argAdapters[i];
+          const helper = name ? __helpers[name] : null;
+          return helper ? helper(arg) : arg;
+        });
+      }
+
+      let __actual = ${fn}.apply(null, __args);
+
+      if (__resultAdapter && __helpers[__resultAdapter]) {
+        __actual = __helpers[__resultAdapter](__actual);
+      }
+
+      const __expected = __case.expected;
+      const __pass = __unordered
+        ? __equal(__canonical(__actual), __canonical(__expected))
+        : __equal(__actual, __expected);
+
+      __results.push(
+        __pass || !__reveal
+          ? { pass: __pass }
+          : {
+              pass: false,
+              actual: JSON.stringify(__actual === undefined ? null : __actual),
+              expected: JSON.stringify(__expected),
+            },
+      );
     } catch (err) {
-      __results.push({ pass: false });
+      __results.push(__reveal ? { pass: false, actual: 'error: ' + err.message } : { pass: false });
     }
   }
 
