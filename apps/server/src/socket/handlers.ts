@@ -1,5 +1,6 @@
 import {
   applyMatchResult,
+  isLanguage,
   isTimedDuration,
   SUBMISSION_COOLDOWN_MS,
   toPublicProblem,
@@ -292,10 +293,18 @@ export function registerHandlers(io: XeetServer, ctx: HandlerContext): void {
         }
 
         const code = typeof payload.code === 'string' ? payload.code.slice(0, MAX_CODE_LENGTH) : '';
+        const language = isLanguage(payload.language) ? payload.language : 'javascript';
         player.lastCode = code;
         player.attemptCount += 1;
 
-        const verdict = await judgeSubmission(match.problem, code);
+        // Submit judges the hidden set and reveals nothing about the data.
+        const verdict = await judgeSubmission(
+          match.problem,
+          code,
+          language,
+          match.problem.testCases,
+          false,
+        );
         if (match.finished) return; // the clock may have run out mid-judge
 
         player.bestPassedCount = Math.max(player.bestPassedCount, verdict.passedCount);
@@ -332,6 +341,37 @@ export function registerHandlers(io: XeetServer, ctx: HandlerContext): void {
         } else if (match.players.every((candidate) => candidate.solved)) {
           await endOnScore(io, ctx, match);
         }
+      })();
+    });
+
+    socket.on('match:run', (payload) => {
+      void (async () => {
+        const match = payload?.matchId ? ctx.matches.get(payload.matchId) : undefined;
+        if (!match || match.finished) return;
+
+        const player = match.players.find((candidate) => candidate.socketId === socket.id);
+        if (!player) return;
+
+        const code = typeof payload.code === 'string' ? payload.code.slice(0, MAX_CODE_LENGTH) : '';
+        const language = isLanguage(payload.language) ? payload.language : 'javascript';
+
+        // Run is a debugging aid: it costs no attempt, moves no score, and the
+        // opponent is not told about it.
+        const verdict = await judgeSubmission(
+          match.problem,
+          code,
+          language,
+          match.problem.sampleCases,
+          true,
+        );
+
+        socket.emit('match:runResult', {
+          passedCount: verdict.passedCount,
+          totalCount: verdict.totalCount,
+          cases: verdict.cases ?? [],
+          ...(verdict.errorKind ? { errorKind: verdict.errorKind } : {}),
+          ...(verdict.errorDetail ? { errorDetail: verdict.errorDetail } : {}),
+        });
       })();
     });
 

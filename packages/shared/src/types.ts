@@ -53,6 +53,39 @@ export function isTopicSelection(value: unknown): value is TopicSelection {
 
 export type Difficulty = 'easy' | 'medium' | 'hard';
 
+/** Languages a player can write a solution in. */
+export const LANGUAGES = ['cpp', 'javascript'] as const;
+export type Language = (typeof LANGUAGES)[number];
+
+export const LANGUAGE_LABELS: Record<Language, string> = {
+  cpp: 'C++',
+  javascript: 'JavaScript',
+};
+
+export function isLanguage(value: unknown): value is Language {
+  return typeof value === 'string' && (LANGUAGES as readonly string[]).includes(value);
+}
+
+/**
+ * Value shapes a problem's parameters and return can take.
+ *
+ * The C++ harness needs static types to emit literals and declarations; the
+ * JavaScript harness ignores these and works straight off the JSON.
+ */
+export type ValueType =
+  | 'int'
+  | 'double'
+  | 'bool'
+  | 'string'
+  | 'int[]'
+  | 'double[]'
+  | 'string[]'
+  | 'int[][]'
+  | 'string[][]'
+  | 'list'
+  | 'list[]'
+  | 'tree';
+
 /**
  * A single hidden test case. Never sent to the browser — it lives in the
  * database and is only read inside the judge (Phase 3).
@@ -69,7 +102,14 @@ export type ResultAdapter = 'listToArray' | 'treeToArray';
 
 /** Full server-side problem, including the hidden tests. */
 export interface Problem extends PublicProblem {
+  /** Hidden edge-case set, run only by "Submit". */
   testCases: TestCase[];
+  /** Parameter and return shapes, required to compile the C++ harness. */
+  cppSignature?: { params: ValueType[]; returns: ValueType };
+  /** Method name on the C++ `Solution` class. */
+  cppFunctionName?: string;
+  /** Name of the JavaScript function a submission must define. */
+  jsFunctionName?: string;
   /**
    * Per-argument conversion applied before calling the solution. `null` leaves
    * that argument as-is. Lets a test case store a linked list as `[1,2,3]`
@@ -98,8 +138,9 @@ export function toPublicProblem(problem: Problem): PublicProblem {
     topic: problem.topic,
     difficulty: problem.difficulty,
     description: problem.description,
-    functionSignature: problem.functionSignature,
-    starterCode: problem.starterCode,
+    starters: problem.starters,
+    // Samples are meant to be visible; the hidden set stays behind.
+    sampleCases: problem.sampleCases,
   };
 }
 
@@ -121,8 +162,13 @@ export interface PublicProblem {
   difficulty: Difficulty;
   /** Markdown. */
   description: string;
-  functionSignature: string;
-  starterCode: string;
+  /** Starter code per language; a problem must offer at least one. */
+  starters: Partial<Record<Language, string>>;
+  /**
+   * Example cases shown in full, with input and expected output. "Run"
+   * executes exactly these, so a player can debug against something concrete.
+   */
+  sampleCases: TestCase[];
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +208,22 @@ export interface LobbyJoinPayload extends PlayerIdentity {
 export interface MatchSubmitPayload {
   matchId: string;
   code: string;
+  language: Language;
+}
+
+/** "Run" executes only the visible samples and never affects the score. */
+export interface MatchRunPayload {
+  matchId: string;
+  code: string;
+  language: Language;
+}
+
+export interface RunResultPayload {
+  passedCount: number;
+  totalCount: number;
+  cases: { pass: boolean; actual?: string; expected?: string }[];
+  errorKind?: 'runtime_error' | 'timeout' | 'compile_error';
+  errorDetail?: string;
 }
 
 export interface ChatSendPayload {
@@ -182,6 +244,7 @@ export interface ClientToServerEvents {
   'lobby:create': (payload: LobbyCreatePayload) => void;
   'lobby:join': (payload: LobbyJoinPayload) => void;
   'match:submit': (payload: MatchSubmitPayload) => void;
+  'match:run': (payload: MatchRunPayload) => void;
   'match:rejoin': (payload: MatchRejoinPayload) => void;
   'match:leave': (payload: MatchLeavePayload) => void;
   'chat:message': (payload: ChatSendPayload) => void;
@@ -243,6 +306,13 @@ export interface SubmissionResultPayload {
   failedTestIndex?: number;
   /** Sanitized, e.g. "Runtime error" or "Time limit exceeded". */
   errorKind?: 'runtime_error' | 'timeout' | 'compile_error';
+  /** Compiler diagnostics. Safe to show — it is the player's own source. */
+  errorDetail?: string;
+  /**
+   * Per-case detail. Populated only for visible sample cases from "Run";
+   * always empty for a hidden "Submit" set.
+   */
+  cases?: { pass: boolean; actual?: string; expected?: string }[];
   /** Epoch ms before which further submissions are rejected. */
   cooldownUntil?: number;
 }
@@ -303,6 +373,7 @@ export interface ServerToClientEvents {
   'match:state': (payload: MatchStatePayload) => void;
   'match:opponentSubmitted': (payload: OpponentSubmittedPayload) => void;
   'match:submissionResult': (payload: SubmissionResultPayload) => void;
+  'match:runResult': (payload: RunResultPayload) => void;
   'match:end': (payload: MatchEndPayload) => void;
   'chat:message': (payload: ChatMessagePayload) => void;
   'opponent:disconnected': (payload: OpponentDisconnectedPayload) => void;

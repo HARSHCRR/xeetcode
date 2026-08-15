@@ -184,7 +184,7 @@ test('a failed submission scores, penalises the attempt, and starts a cooldown',
     );
     const verdict = nextEvent<SubmissionResultPayload>(host, 'match:submissionResult');
 
-    host.emit('match:submit', { matchId: h.matchId, code: 'function nope() {}' });
+    host.emit('match:submit', { matchId: h.matchId, code: 'function nope() {}', language: 'javascript' });
 
     const result = await verdict;
     assert.equal(result.passed, false);
@@ -214,8 +214,9 @@ function pinTrivialProblem() {
       topic: 'arrays',
       difficulty: 'easy',
       description: '',
-      functionSignature: 'function pinned(n)',
-      starterCode: 'function pinned(n) {}',
+      starters: { javascript: '' },
+      sampleCases: [],
+      jsFunctionName: 'pinned',
       testCases: [
         { input: [1], expected: 2 },
         { input: [5], expected: 6 },
@@ -233,7 +234,7 @@ test('an untimed match ends the moment someone solves it', async () => {
       const hostEnd = nextEvent<MatchEndPayload>(host, 'match:end');
       const guestEnd = nextEvent<MatchEndPayload>(guest, 'match:end');
 
-      host.emit('match:submit', { matchId: h.matchId, code: 'function pinned(n) { return n + 1; }' });
+      host.emit('match:submit', { matchId: h.matchId, code: 'function pinned(n) { return n + 1; }', language: 'javascript' });
 
       const [hostResult, guestResult] = await Promise.all([hostEnd, guestEnd]);
       assert.equal(hostResult.result, 'win', 'the solver wins immediately');
@@ -254,7 +255,7 @@ test('a timed match keeps going after one player solves, then decides on score',
       const { host, guest, h } = await pairUp(harness, { timed: true, minutes: 15 });
 
       const solved = nextEvent<SubmissionResultPayload>(host, 'match:submissionResult');
-      host.emit('match:submit', { matchId: h.matchId, code: 'function pinned(n) { return n + 1; }' });
+      host.emit('match:submit', { matchId: h.matchId, code: 'function pinned(n) { return n + 1; }', language: 'javascript' });
       const verdict = await solved;
       assert.equal(verdict.passed, true);
 
@@ -267,7 +268,7 @@ test('a timed match keeps going after one player solves, then decides on score',
 
       // Once both are done there is nothing left to gain, so it settles.
       const hostEnd = nextEvent<MatchEndPayload>(host, 'match:end');
-      guest.emit('match:submit', { matchId: h.matchId, code: 'function pinned(n) { return n + 1; }' });
+      guest.emit('match:submit', { matchId: h.matchId, code: 'function pinned(n) { return n + 1; }', language: 'javascript' });
 
       const result = await hostEnd;
       assert.equal(result.score, 68);
@@ -287,11 +288,11 @@ test('a solved player cannot submit again and decay their score', async () => {
       const { host, h } = await pairUp(harness, { timed: true, minutes: 15 });
 
       const first = nextEvent<SubmissionResultPayload>(host, 'match:submissionResult');
-      host.emit('match:submit', { matchId: h.matchId, code: 'function pinned(n) { return n + 1; }' });
+      host.emit('match:submit', { matchId: h.matchId, code: 'function pinned(n) { return n + 1; }', language: 'javascript' });
       assert.equal((await first).score, 68);
 
       // A further attempt must be ignored rather than costing 2 points.
-      host.emit('match:submit', { matchId: h.matchId, code: 'function pinned() { return 0; }' });
+      host.emit('match:submit', { matchId: h.matchId, code: 'function pinned() { return 0; }', language: 'javascript' });
       await assert.rejects(
         () => nextEvent<SubmissionResultPayload>(host, 'match:submissionResult', 600),
         /timed out/,
@@ -345,7 +346,7 @@ test('rejoining restores score, attempts, and chat', async () => {
 
     host.emit('chat:message', { matchId: h.matchId, text: 'hello' });
     const verdict = nextEvent<SubmissionResultPayload>(host, 'match:submissionResult');
-    host.emit('match:submit', { matchId: h.matchId, code: 'function nope() {}' });
+    host.emit('match:submit', { matchId: h.matchId, code: 'function nope() {}', language: 'javascript' });
     await verdict;
 
     const state = nextEvent<{

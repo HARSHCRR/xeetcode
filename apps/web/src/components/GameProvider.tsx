@@ -8,8 +8,10 @@ import type {
   ChatMessagePayload,
   ClientToServerEvents,
   MatchEndPayload,
+  Language,
   MatchFormat,
   MatchFoundPayload,
+  RunResultPayload,
   ServerToClientEvents,
   SubmissionResultPayload,
 } from '@xeetcode/shared';
@@ -37,14 +39,17 @@ interface GameState {
   match: MatchView | null;
   result: MatchEndPayload | null;
   submission: SubmissionResultPayload | null;
+  runResult: RunResultPayload | null;
   judging: boolean;
+  running: boolean;
   chat: ChatMessagePayload[];
   opponentOnline: boolean;
   lobbyCode: string | null;
   error: string | null;
   createLobby: (format: MatchFormat) => void;
   joinLobby: (code: string) => void;
-  submitCode: (code: string) => void;
+  submitCode: (code: string, language: Language) => void;
+  runCode: (code: string, language: Language) => void;
   sendChat: (text: string) => void;
   leaveMatch: () => void;
   rejoinMatch: (matchId: string, userId: string) => void;
@@ -69,7 +74,9 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   const [match, setMatch] = useState<MatchView | null>(null);
   const [result, setResult] = useState<MatchEndPayload | null>(null);
   const [submission, setSubmission] = useState<SubmissionResultPayload | null>(null);
+  const [runResult, setRunResult] = useState<RunResultPayload | null>(null);
   const [judging, setJudging] = useState(false);
+  const [running, setRunning] = useState(false);
   const [chat, setChat] = useState<ChatMessagePayload[]>([]);
   const [opponentOnline, setOpponentOnline] = useState(true);
   const [lobbyCode, setLobbyCode] = useState<string | null>(null);
@@ -99,6 +106,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       });
       setResult(null);
       setSubmission(null);
+      setRunResult(null);
       setChat([]);
       setOpponentOnline(true);
       setStatus('in_match');
@@ -150,6 +158,11 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       );
     });
 
+    socket.on('match:runResult', (payload) => {
+      setRunResult(payload);
+      setRunning(false);
+    });
+
     socket.on('match:end', (payload) => {
       setResult(payload);
       setJudging(false);
@@ -197,11 +210,21 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   );
 
   const submitCode = useCallback(
-    (code: string) => {
+    (code: string, language: Language) => {
       if (!match) return;
       setJudging(true);
       setSubmission(null);
-      socketRef.current?.emit('match:submit', { matchId: match.matchId, code });
+      socketRef.current?.emit('match:submit', { matchId: match.matchId, code, language });
+    },
+    [match],
+  );
+
+  const runCode = useCallback(
+    (code: string, language: Language) => {
+      if (!match) return;
+      setRunning(true);
+      setRunResult(null);
+      socketRef.current?.emit('match:run', { matchId: match.matchId, code, language });
     },
     [match],
   );
@@ -227,7 +250,9 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     setMatch(null);
     setResult(null);
     setSubmission(null);
+    setRunResult(null);
     setJudging(false);
+    setRunning(false);
     setChat([]);
     setLobbyCode(null);
     setError(null);
@@ -241,7 +266,9 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       match,
       result,
       submission,
+      runResult,
       judging,
+      running,
       chat,
       opponentOnline,
       lobbyCode,
@@ -249,6 +276,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       createLobby,
       joinLobby,
       submitCode,
+      runCode,
       sendChat,
       leaveMatch,
       rejoinMatch,
@@ -260,7 +288,9 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       match,
       result,
       submission,
+      runResult,
       judging,
+      running,
       chat,
       opponentOnline,
       lobbyCode,
@@ -268,6 +298,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       createLobby,
       joinLobby,
       submitCode,
+      runCode,
       sendChat,
       leaveMatch,
       rejoinMatch,

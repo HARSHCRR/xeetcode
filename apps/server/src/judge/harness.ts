@@ -1,4 +1,4 @@
-import type { Problem } from '@xeetcode/shared';
+import type { Problem, TestCase } from '@xeetcode/shared';
 
 import { STRUCTURE_PRELUDE } from './prelude.js';
 
@@ -6,13 +6,13 @@ import { STRUCTURE_PRELUDE } from './prelude.js';
 export const RESULT_MARKER = '__XEETCODE_RESULT__';
 
 export interface HarnessResult {
-  results: { pass: boolean }[];
+  results: { pass: boolean; actual?: string; expected?: string }[];
   error?: string;
 }
 
-/** Parses the function name a problem expects, e.g. "function twoSum(a, b)" -> "twoSum". */
+/** The JavaScript function a submission must define. */
 export function solutionName(problem: Problem): string {
-  return problem.functionSignature.match(/function\s+(\w+)/)?.[1] ?? 'solution';
+  return problem.jsFunctionName ?? 'solution';
 }
 
 /**
@@ -27,9 +27,15 @@ export function solutionName(problem: Problem): string {
  * lists or trees name an adapter (see `prelude.ts`) to convert between the JSON
  * in the test case and the real node structure.
  */
-export function buildHarness(problem: Problem, userCode: string): string {
+export function buildHarness(
+  problem: Problem,
+  userCode: string,
+  caseList: TestCase[] = problem.testCases,
+  revealActual = false,
+): string {
   const fn = solutionName(problem);
-  const cases = JSON.stringify(problem.testCases);
+  const cases = JSON.stringify(caseList);
+  const reveal = JSON.stringify(revealActual);
   const argAdapters = JSON.stringify(problem.argAdapters ?? null);
   const resultAdapter = JSON.stringify(problem.resultAdapter ?? null);
   const unordered = JSON.stringify(Boolean(problem.unorderedResult));
@@ -44,6 +50,7 @@ ${userCode}
   const __argAdapters = ${argAdapters};
   const __resultAdapter = ${resultAdapter};
   const __unordered = ${unordered};
+  const __reveal = ${reveal};
 
   const __helpers = {
     buildList: typeof __buildList === 'function' ? __buildList : null,
@@ -115,9 +122,17 @@ ${userCode}
         ? __equal(__canonical(__actual), __canonical(__expected))
         : __equal(__actual, __expected);
 
-      __results.push({ pass: __pass });
+      __results.push(
+        __pass || !__reveal
+          ? { pass: __pass }
+          : {
+              pass: false,
+              actual: JSON.stringify(__actual === undefined ? null : __actual),
+              expected: JSON.stringify(__expected),
+            },
+      );
     } catch (err) {
-      __results.push({ pass: false });
+      __results.push(__reveal ? { pass: false, actual: 'error: ' + err.message } : { pass: false });
     }
   }
 
