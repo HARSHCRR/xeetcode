@@ -1,7 +1,18 @@
 /** Tunables shared by client and server, so both agree without duplication. */
 
-/** Fixed match length for timed mode. */
+/** Match lengths a player may pick, in minutes. */
+export const TIMED_DURATION_MINUTES = [15, 20, 30] as const;
+export type TimedDurationMinutes = (typeof TIMED_DURATION_MINUTES)[number];
+
+/** Default when nothing is chosen. */
 export const MATCH_DURATION_MS = 15 * 60 * 1000;
+
+/** Narrows untrusted client input to an allowed duration. */
+export function isTimedDuration(value: unknown): value is TimedDurationMinutes {
+  return (
+    typeof value === 'number' && (TIMED_DURATION_MINUTES as readonly number[]).includes(value)
+  );
+}
 
 /** Cooldown enforced after a failed submission, to discourage brute-forcing tests. */
 export const SUBMISSION_COOLDOWN_MS = 15 * 1000;

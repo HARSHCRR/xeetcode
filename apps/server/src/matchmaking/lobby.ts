@@ -1,7 +1,7 @@
 import { randomInt } from 'node:crypto';
 
 import { LOBBY_CODE_ALPHABET, LOBBY_CODE_LENGTH, LOBBY_TTL_MS } from '@xeetcode/shared';
-import type { TopicSelection } from '@xeetcode/shared';
+import type { MatchFormat } from '@xeetcode/shared';
 
 export interface Lobby {
   code: string;
@@ -9,7 +9,7 @@ export interface Lobby {
   hostUserId: string;
   hostName: string;
   hostRating: number;
-  topic: TopicSelection;
+  format: MatchFormat;
   createdAt: number;
 }
 

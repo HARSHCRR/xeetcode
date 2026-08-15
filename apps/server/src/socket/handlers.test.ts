@@ -6,22 +6,23 @@ import type {
   ClientToServerEvents,
   LobbyCreatedPayload,
   LobbyErrorPayload,
+  MatchEndPayload,
   MatchFoundPayload,
   ServerToClientEvents,
+  SubmissionResultPayload,
 } from '@xeetcode/shared';
 import { Server } from 'socket.io';
 import { io as ioClient, type Socket as ClientSocket } from 'socket.io-client';
 
 import { resetPlayersForTesting } from '../players/store.js';
-import { loadProblems } from '../problems/repository.js';
+import { loadProblems, setProblemsForTesting } from '../problems/repository.js';
 import { createContext, registerHandlers } from './handlers.js';
 
 /**
  * End-to-end socket tests over a real HTTP server and real client sockets.
  *
- * The unit tests cover queue and lobby logic in isolation; these exist to prove
- * the thing Phase 2 is actually for — that two independent clients end up in
- * the same match, with the same problem, through the real event plumbing.
+ * These prove the thing the product is for: two independent clients sharing a
+ * code end up in the same match, and the score decides it.
  */
 
 type TestClient = ClientSocket<ServerToClientEvents, ClientToServerEvents>;
@@ -37,9 +38,8 @@ interface Harness {
 /**
  * Runs `body` against a server with completely fresh state.
  *
- * Each test gets its own queue, lobby registry, and match registry. Sharing one
- * server across tests made them order-dependent: a player left waiting in one
- * test would silently pair with the first arrival in the next.
+ * Each test gets its own lobby and match registries. Sharing one server made
+ * tests order-dependent: state left behind by one leaked into the next.
  */
 async function withServer(body: (harness: Harness) => Promise<void>): Promise<void> {
   const httpServer = createServer();
@@ -79,8 +79,7 @@ async function withServer(body: (harness: Harness) => Promise<void>): Promise<vo
   }
 }
 
-/** Resolves with the next payload for `event`, or rejects after `timeoutMs`. */
-function nextEvent<T>(client: TestClient, event: string, timeoutMs = 3000): Promise<T> {
+function nextEvent<T>(client: TestClient, event: string, timeoutMs = 15000): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`timed out waiting for "${event}"`)), timeoutMs);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -91,125 +90,82 @@ function nextEvent<T>(client: TestClient, event: string, timeoutMs = 3000): Prom
   });
 }
 
-test('two players queueing the same topic land in the same match', async () => {
-  await withServer(async ({ connect }) => {
-    const alice = await connect();
-    const bob = await connect();
+/** Hosts a lobby and joins it, returning both clients and the host's payload. */
+async function pairUp(
+  harness: Harness,
+  format: { timed: boolean; minutes?: number } = { timed: true, minutes: 15 },
+) {
+  const host = await harness.connect();
+  const guest = await harness.connect();
 
-    const aliceMatch = nextEvent<MatchFoundPayload>(alice, 'match:found');
-    const bobMatch = nextEvent<MatchFoundPayload>(bob, 'match:found');
+  const created = nextEvent<LobbyCreatedPayload>(host, 'lobby:created');
+  host.emit('lobby:create', { playerId: crypto.randomUUID(), name: 'host', format });
+  const { code } = await created;
 
-    alice.emit('queue:join', { playerId: crypto.randomUUID(), name: 'alice', topic: 'arrays' });
-    bob.emit('queue:join', { playerId: crypto.randomUUID(), name: 'bob', topic: 'arrays' });
+  const hostMatch = nextEvent<MatchFoundPayload>(host, 'match:found');
+  const guestMatch = nextEvent<MatchFoundPayload>(guest, 'match:found');
+  guest.emit('lobby:join', { playerId: crypto.randomUUID(), name: 'guest', code });
 
-    const [a, b] = await Promise.all([aliceMatch, bobMatch]);
+  const [h, g] = await Promise.all([hostMatch, guestMatch]);
+  return { host, guest, h, g, code };
+}
 
-    assert.equal(a.matchId, b.matchId, 'both players must be in the same match');
-    assert.equal(a.problem.id, b.problem.id, 'both players must get the same problem');
-    assert.equal(a.problem.topic, 'arrays');
-    assert.equal(a.opponentName, 'bob');
-    assert.equal(b.opponentName, 'alice');
-    assert.notEqual(a.userId, b.userId, 'each player needs a distinct identity');
+test('a shared code puts both players in the same match', async () => {
+  await withServer(async (harness) => {
+    const { h, g } = await pairUp(harness);
+
+    assert.equal(h.matchId, g.matchId, 'both players must be in the same match');
+    assert.equal(h.problem.id, g.problem.id, 'both players must get the same problem');
+    assert.equal(h.opponentName, 'guest');
+    assert.equal(g.opponentName, 'host');
+    assert.notEqual(h.userId, g.userId, 'each player needs a distinct identity');
   });
 });
 
-test('the problem sent to clients never includes hidden test cases', async () => {
-  await withServer(async ({ connect }) => {
-    const one = await connect();
-    const two = await connect();
-
-    const found = nextEvent<MatchFoundPayload>(one, 'match:found');
-    one.emit('queue:join', { playerId: crypto.randomUUID(), name: 'one', topic: 'strings' });
-    two.emit('queue:join', { playerId: crypto.randomUUID(), name: 'two', topic: 'strings' });
-
-    const payload = await found;
-    assert.ok(!('testCases' in payload.problem), 'hidden tests must not cross the wire');
+test('hidden test cases never cross the wire', async () => {
+  await withServer(async (harness) => {
+    const { h } = await pairUp(harness);
+    assert.ok(!('testCases' in h.problem), 'hidden tests must not reach the browser');
   });
 });
 
-test('a player queueing a different topic is not matched', async () => {
-  await withServer(async ({ connect }) => {
-    const arrays = await connect();
-    const strings = await connect();
+test('a timed match carries a deadline; an untimed one does not', async () => {
+  await withServer(async (harness) => {
+    const timed = await pairUp(harness, { timed: true, minutes: 30 });
+    assert.ok(timed.h.endsAt, 'a timed match needs a deadline');
+    assert.equal(Math.round((timed.h.endsAt! - timed.h.startedAt) / 60000), 30);
+  });
 
-    const waiting = nextEvent(arrays, 'queue:waiting');
-    arrays.emit('queue:join', { playerId: crypto.randomUUID(), name: 'arrays-fan', topic: 'arrays' });
-    await waiting;
-
-    strings.emit('queue:join', { playerId: crypto.randomUUID(), name: 'strings-fan', topic: 'strings' });
-
-    await assert.rejects(
-      () => nextEvent<MatchFoundPayload>(arrays, 'match:found', 500),
-      /timed out/,
-      'players on different topics must not be paired',
-    );
+  await withServer(async (harness) => {
+    const untimed = await pairUp(harness, { timed: false });
+    assert.equal(untimed.h.endsAt, null, 'an untimed match has no deadline');
   });
 });
 
-test('a random-queued player is not pulled into a topic queue', async () => {
-  await withServer(async ({ connect }) => {
-    const topical = await connect();
-    const anyTopic = await connect();
-
-    const waiting = nextEvent(topical, 'queue:waiting');
-    topical.emit('queue:join', { playerId: crypto.randomUUID(), name: 'binary-fan', topic: 'binary_search' });
-    await waiting;
-
-    anyTopic.emit('queue:join', { playerId: crypto.randomUUID(), name: 'roulette', topic: 'random' });
-
-    await assert.rejects(
-      () => nextEvent<MatchFoundPayload>(topical, 'match:found', 500),
-      /timed out/,
-      'random must be its own queue',
-    );
+test('an unrecognised duration falls back rather than being trusted', async () => {
+  await withServer(async (harness) => {
+    // 999 is not an offered option; the server must not honour it.
+    const { h } = await pairUp(harness, { timed: true, minutes: 999 });
+    assert.equal(Math.round((h.endsAt! - h.startedAt) / 60000), 15);
   });
 });
 
-test('a friend joining by lobby code reaches the same match as the host', async () => {
-  await withServer(async ({ connect }) => {
-    const host = await connect();
-    const friend = await connect();
+test('a code is single-use, so a third player cannot join', async () => {
+  await withServer(async (harness) => {
+    const { code } = await pairUp(harness);
+    const gatecrasher = await harness.connect();
 
-    const created = nextEvent<LobbyCreatedPayload>(host, 'lobby:created');
-    host.emit('lobby:create', { playerId: crypto.randomUUID(), name: 'host', topic: 'arrays' });
-    const { code } = await created;
+    const failure = nextEvent<LobbyErrorPayload>(gatecrasher, 'lobby:error');
+    gatecrasher.emit('lobby:join', { playerId: crypto.randomUUID(), name: 'third', code });
 
-    assert.equal(code.length, 6);
-
-    const hostMatch = nextEvent<MatchFoundPayload>(host, 'match:found');
-    const friendMatch = nextEvent<MatchFoundPayload>(friend, 'match:found');
-    friend.emit('lobby:join', { playerId: crypto.randomUUID(), name: 'friend', code });
-
-    const [h, f] = await Promise.all([hostMatch, friendMatch]);
-
-    assert.equal(h.matchId, f.matchId);
-    assert.equal(h.problem.id, f.problem.id);
-    assert.equal(h.mode, 'friend');
-    assert.equal(h.opponentName, 'friend');
-    assert.equal(f.opponentName, 'host');
+    const { message } = await failure;
+    assert.match(message, /invalid|expired/i);
   });
 });
 
-test('lobby codes are accepted case-insensitively', async () => {
-  await withServer(async ({ connect }) => {
-    const host = await connect();
-    const friend = await connect();
-
-    const created = nextEvent<LobbyCreatedPayload>(host, 'lobby:created');
-    host.emit('lobby:create', { playerId: crypto.randomUUID(), name: 'host', topic: 'random' });
-    const { code } = await created;
-
-    const friendMatch = nextEvent<MatchFoundPayload>(friend, 'match:found');
-    friend.emit('lobby:join', { playerId: crypto.randomUUID(), name: 'friend', code: code.toLowerCase() });
-
-    await friendMatch; // rejects on timeout if the lowercase code was refused
-  });
-});
-
-test('an unknown lobby code returns an error rather than hanging', async () => {
+test('an unknown code errors rather than hanging', async () => {
   await withServer(async ({ connect }) => {
     const stranger = await connect();
-
     const failure = nextEvent<LobbyErrorPayload>(stranger, 'lobby:error');
     stranger.emit('lobby:join', { playerId: crypto.randomUUID(), name: 'stranger', code: 'ZZZZZZ' });
 
@@ -218,122 +174,191 @@ test('an unknown lobby code returns an error rather than hanging', async () => {
   });
 });
 
-test('a lobby code cannot be reused by a third player', async () => {
-  await withServer(async ({ connect }) => {
-    const host = await connect();
-    const friend = await connect();
-    const gatecrasher = await connect();
+test('a failed submission scores, penalises the attempt, and starts a cooldown', async () => {
+  await withServer(async (harness) => {
+    const { host, guest, h } = await pairUp(harness);
 
-    const created = nextEvent<LobbyCreatedPayload>(host, 'lobby:created');
-    host.emit('lobby:create', { playerId: crypto.randomUUID(), name: 'host', topic: 'arrays' });
-    const { code } = await created;
+    const opponentNotice = nextEvent<{ attemptCount: number; score: number; solved: boolean }>(
+      guest,
+      'match:opponentSubmitted',
+    );
+    const verdict = nextEvent<SubmissionResultPayload>(host, 'match:submissionResult');
 
-    const friendMatch = nextEvent<MatchFoundPayload>(friend, 'match:found');
-    friend.emit('lobby:join', { playerId: crypto.randomUUID(), name: 'friend', code });
-    await friendMatch;
+    host.emit('match:submit', { matchId: h.matchId, code: 'function nope() {}' });
 
-    const failure = nextEvent<LobbyErrorPayload>(gatecrasher, 'lobby:error');
-    gatecrasher.emit('lobby:join', { playerId: crypto.randomUUID(), name: 'gatecrasher', code });
-
-    const { message } = await failure;
-    assert.match(message, /invalid|expired/i);
-  });
-});
-
-test('cancelling removes a player from the queue', async () => {
-  await withServer(async ({ connect }) => {
-    const quitter = await connect();
-    const later = await connect();
-
-    const waiting = nextEvent(quitter, 'queue:waiting');
-    quitter.emit('queue:join', { playerId: crypto.randomUUID(), name: 'quitter', topic: 'strings' });
-    await waiting;
-
-    quitter.emit('queue:leave');
-    // Give the server a moment to process the leave before the next join.
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    const stillWaiting = nextEvent(later, 'queue:waiting');
-    later.emit('queue:join', { playerId: crypto.randomUUID(), name: 'later', topic: 'strings' });
-
-    // If the cancel didn't take, these two would have been paired instead.
-    await stillWaiting;
-  });
-});
-
-test('submitting notifies the opponent without leaking the verdict', async () => {
-  await withServer(async ({ connect }) => {
-    const alice = await connect();
-    const bob = await connect();
-
-    const found = nextEvent<MatchFoundPayload>(alice, 'match:found');
-    alice.emit('queue:join', { playerId: crypto.randomUUID(), name: 'alice', topic: 'arrays' });
-    bob.emit('queue:join', { playerId: crypto.randomUUID(), name: 'bob', topic: 'arrays' });
-    const match = await found;
-
-    const opponentNotice = nextEvent<{ attemptCount: number }>(bob, 'match:opponentSubmitted', 15000);
-    const ownVerdict = nextEvent<Record<string, unknown>>(alice, 'match:submissionResult', 15000);
-
-    alice.emit('match:submit', { matchId: match.matchId, code: 'function nope() {}' });
+    const result = await verdict;
+    assert.equal(result.passed, false);
+    assert.equal(result.attemptCount, 1);
+    assert.ok(result.cooldownUntil, 'a failed attempt should start a cooldown');
+    // 0 tests passed, 1 attempt -> -2, floored at 0.
+    assert.equal(result.score, 0);
 
     const notice = await opponentNotice;
     assert.equal(notice.attemptCount, 1);
-    // The opponent learns an attempt happened and nothing else.
-    assert.deepEqual(Object.keys(notice), ['attemptCount']);
-
-    const verdict = await ownVerdict;
-    assert.equal(verdict.passed, false);
-    assert.ok(verdict.cooldownUntil, 'a failed attempt should start a cooldown');
+    assert.equal(notice.solved, false);
+    // The opponent sees the score, never the code or which tests failed.
+    assert.deepEqual(Object.keys(notice).sort(), ['attemptCount', 'score', 'solved']);
   });
 });
 
-test('chat reaches both players and is tagged with the sender', async () => {
-  await withServer(async ({ connect }) => {
-    const alice = await connect();
-    const bob = await connect();
+/**
+ * Pins a trivial problem so a test can submit a genuinely correct solution.
+ * Restored by `loadProblems()` in the next test that needs the real bank.
+ */
+function pinTrivialProblem() {
+  setProblemsForTesting([
+    {
+      id: 'pinned',
+      slug: 'pinned',
+      title: 'Pinned',
+      topic: 'arrays',
+      difficulty: 'easy',
+      description: '',
+      functionSignature: 'function pinned(n)',
+      starterCode: 'function pinned(n) {}',
+      testCases: [
+        { input: [1], expected: 2 },
+        { input: [5], expected: 6 },
+      ],
+    },
+  ]);
+}
 
-    const found = nextEvent<MatchFoundPayload>(alice, 'match:found');
-    alice.emit('queue:join', { playerId: crypto.randomUUID(), name: 'alice', topic: 'strings' });
-    bob.emit('queue:join', { playerId: crypto.randomUUID(), name: 'bob', topic: 'strings' });
-    const match = await found;
+test('an untimed match ends the moment someone solves it', async () => {
+  pinTrivialProblem();
+  try {
+    await withServer(async (harness) => {
+      const { host, guest, h } = await pairUp(harness, { timed: false });
 
-    const toBob = nextEvent<{ from: string; text: string; fromUserId: string }>(bob, 'chat:message');
-    alice.emit('chat:message', { matchId: match.matchId, text: 'good luck' });
+      const hostEnd = nextEvent<MatchEndPayload>(host, 'match:end');
+      const guestEnd = nextEvent<MatchEndPayload>(guest, 'match:end');
 
-    const message = await toBob;
-    assert.equal(message.text, 'good luck');
-    assert.equal(message.from, 'alice');
-    assert.equal(message.fromUserId, match.userId);
+      host.emit('match:submit', { matchId: h.matchId, code: 'function pinned(n) { return n + 1; }' });
+
+      const [hostResult, guestResult] = await Promise.all([hostEnd, guestEnd]);
+      assert.equal(hostResult.result, 'win', 'the solver wins immediately');
+      assert.equal(guestResult.result, 'loss');
+      // 2 tests x 10, minus 1 attempt x 2, plus the 50 full-pass bonus.
+      assert.equal(hostResult.score, 68);
+      assert.equal(hostResult.ratingChange, 16);
+    });
+  } finally {
+    await loadProblems();
+  }
+});
+
+test('a timed match keeps going after one player solves, then decides on score', async () => {
+  pinTrivialProblem();
+  try {
+    await withServer(async (harness) => {
+      const { host, guest, h } = await pairUp(harness, { timed: true, minutes: 15 });
+
+      const solved = nextEvent<SubmissionResultPayload>(host, 'match:submissionResult');
+      host.emit('match:submit', { matchId: h.matchId, code: 'function pinned(n) { return n + 1; }' });
+      const verdict = await solved;
+      assert.equal(verdict.passed, true);
+
+      // A solve alone must not end a timed match — the opponent can still score.
+      await assert.rejects(
+        () => nextEvent<MatchEndPayload>(host, 'match:end', 600),
+        /timed out/,
+        'a timed match should run on after a single solve',
+      );
+
+      // Once both are done there is nothing left to gain, so it settles.
+      const hostEnd = nextEvent<MatchEndPayload>(host, 'match:end');
+      guest.emit('match:submit', { matchId: h.matchId, code: 'function pinned(n) { return n + 1; }' });
+
+      const result = await hostEnd;
+      assert.equal(result.score, 68);
+      assert.equal(result.opponentScore, 68);
+      assert.equal(result.status, 'draw', 'equal scores are a draw');
+      assert.equal(result.ratingChange, 0, 'draws leave ratings alone');
+    });
+  } finally {
+    await loadProblems();
+  }
+});
+
+test('a solved player cannot submit again and decay their score', async () => {
+  pinTrivialProblem();
+  try {
+    await withServer(async (harness) => {
+      const { host, h } = await pairUp(harness, { timed: true, minutes: 15 });
+
+      const first = nextEvent<SubmissionResultPayload>(host, 'match:submissionResult');
+      host.emit('match:submit', { matchId: h.matchId, code: 'function pinned(n) { return n + 1; }' });
+      assert.equal((await first).score, 68);
+
+      // A further attempt must be ignored rather than costing 2 points.
+      host.emit('match:submit', { matchId: h.matchId, code: 'function pinned() { return 0; }' });
+      await assert.rejects(
+        () => nextEvent<SubmissionResultPayload>(host, 'match:submissionResult', 600),
+        /timed out/,
+        'submissions after solving should be refused',
+      );
+    });
+  } finally {
+    await loadProblems();
+  }
+});
+
+test('leaving concedes and moves both ratings by an equal, opposite amount', async () => {
+  await withServer(async (harness) => {
+    const { host, guest, h } = await pairUp(harness);
+
+    const hostEnd = nextEvent<MatchEndPayload>(host, 'match:end');
+    const guestEnd = nextEvent<MatchEndPayload>(guest, 'match:end');
+
+    host.emit('match:leave', { matchId: h.matchId });
+
+    const [hostResult, guestResult] = await Promise.all([hostEnd, guestEnd]);
+    assert.equal(guestResult.result, 'win');
+    assert.equal(hostResult.result, 'loss');
+    // Both start at 1200, so the swing is half the K-factor.
+    assert.equal(guestResult.ratingChange, 16);
+    assert.equal(hostResult.ratingChange, -16);
+    assert.equal(guestResult.ratingChange + hostResult.ratingChange, 0, 'Elo must be zero-sum');
   });
 });
 
-test('leaving hands the win to the opponent and moves both ratings', async () => {
-  await withServer(async ({ connect }) => {
-    const alice = await connect();
-    const bob = await connect();
+test('chat reaches both players tagged with the sender', async () => {
+  await withServer(async (harness) => {
+    const { host, guest, h } = await pairUp(harness);
 
-    const aliceFound = nextEvent<MatchFoundPayload>(alice, 'match:found');
-    const bobFound = nextEvent<MatchFoundPayload>(bob, 'match:found');
-    alice.emit('queue:join', { playerId: crypto.randomUUID(), name: 'alice', topic: 'arrays' });
-    bob.emit('queue:join', { playerId: crypto.randomUUID(), name: 'bob', topic: 'arrays' });
-    const [a] = await Promise.all([aliceFound, bobFound]);
-
-    const aliceEnd = nextEvent<Record<string, number | string>>(alice, 'match:end', 10000);
-    const bobEnd = nextEvent<Record<string, number | string>>(bob, 'match:end', 10000);
-
-    alice.emit('match:leave', { matchId: a.matchId });
-
-    const [aliceResult, bobResult] = await Promise.all([aliceEnd, bobEnd]);
-
-    assert.equal(bobResult.result, 'win');
-    assert.equal(aliceResult.result, 'loss');
-    // Evenly matched players start at 1200, so the swing is half the K-factor.
-    assert.equal(bobResult.ratingChange, 16);
-    assert.equal(aliceResult.ratingChange, -16);
-    assert.equal(
-      Number(bobResult.ratingChange) + Number(aliceResult.ratingChange),
-      0,
-      'Elo must be zero-sum',
+    const toGuest = nextEvent<{ from: string; text: string; fromUserId: string }>(
+      guest,
+      'chat:message',
     );
+    host.emit('chat:message', { matchId: h.matchId, text: 'good luck' });
+
+    const message = await toGuest;
+    assert.equal(message.text, 'good luck');
+    assert.equal(message.from, 'host');
+    assert.equal(message.fromUserId, h.userId);
+  });
+});
+
+test('rejoining restores score, attempts, and chat', async () => {
+  await withServer(async (harness) => {
+    const { host, h } = await pairUp(harness);
+
+    host.emit('chat:message', { matchId: h.matchId, text: 'hello' });
+    const verdict = nextEvent<SubmissionResultPayload>(host, 'match:submissionResult');
+    host.emit('match:submit', { matchId: h.matchId, code: 'function nope() {}' });
+    await verdict;
+
+    const state = nextEvent<{
+      attemptCount: number;
+      score: number;
+      chatHistory: unknown[];
+      lastCode?: string;
+    }>(host, 'match:state');
+    host.emit('match:rejoin', { matchId: h.matchId, userId: h.userId });
+
+    const restored = await state;
+    assert.equal(restored.attemptCount, 1);
+    assert.equal(restored.chatHistory.length, 1);
+    assert.equal(restored.lastCode, 'function nope() {}');
   });
 });

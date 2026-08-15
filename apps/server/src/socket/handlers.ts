@@ -1,24 +1,22 @@
 import {
   applyMatchResult,
-  isTopicSelection,
+  isTimedDuration,
   SUBMISSION_COOLDOWN_MS,
   toPublicProblem,
 } from '@xeetcode/shared';
 import type {
   ChatMessagePayload,
   ClientToServerEvents,
+  MatchFormat,
   MatchFoundPayload,
   ServerToClientEvents,
-  TopicSelection,
 } from '@xeetcode/shared';
 import type { Server, Socket } from 'socket.io';
 
 import { judgeSubmission } from '../judge/index.js';
 import { LobbyRegistry } from '../matchmaking/lobby.js';
-import { MatchRegistry } from '../matchmaking/matches.js';
+import { MatchRegistry, playerScore } from '../matchmaking/matches.js';
 import type { LiveMatch, MatchPlayer } from '../matchmaking/matches.js';
-import { MatchmakingQueue } from '../matchmaking/queue.js';
-import type { QueuedPlayer } from '../matchmaking/queue.js';
 import { getOrCreatePlayer, recordMatch, saveRating } from '../players/store.js';
 import { pickProblem } from '../problems/repository.js';
 
@@ -36,18 +34,20 @@ function sanitizeName(raw: unknown): string {
   return trimmed.length > 0 ? trimmed : 'Anonymous';
 }
 
+/** Narrows an untrusted format, falling back to the default timed match. */
+function sanitizeFormat(raw: unknown): MatchFormat {
+  const value = (raw ?? {}) as Partial<MatchFormat>;
+  if (value.timed === false) return { timed: false };
+  return { timed: true, minutes: isTimedDuration(value.minutes) ? value.minutes : 15 };
+}
+
 export interface HandlerContext {
-  queue: MatchmakingQueue;
   lobbies: LobbyRegistry;
   matches: MatchRegistry;
 }
 
 export function createContext(): HandlerContext {
-  return {
-    queue: new MatchmakingQueue(),
-    lobbies: new LobbyRegistry(),
-    matches: new MatchRegistry(),
-  };
+  return { lobbies: new LobbyRegistry(), matches: new MatchRegistry() };
 }
 
 function matchFoundFor(match: LiveMatch, userId: string): MatchFoundPayload | undefined {
@@ -70,10 +70,10 @@ function matchFoundFor(match: LiveMatch, userId: string): MatchFoundPayload | un
 }
 
 /**
- * Ends a match: settles Elo, persists the record, and tells both players.
+ * Ends a match: decides the winner, settles Elo, persists, and notifies.
  *
- * Ratings are computed from the values captured at match start, so the pair of
- * updates is symmetric no matter what else either player has been doing.
+ * Who wins depends on how the match ended, which the caller states explicitly
+ * rather than this function guessing from the clock.
  */
 async function endMatch(
   io: XeetServer,
@@ -90,11 +90,10 @@ async function endMatch(
   let firstAfter = first.ratingBefore;
   let secondAfter = second.ratingBefore;
 
-  // A draw or an abandoned match leaves ratings untouched, per the design.
+  // Draws and abandoned matches leave ratings untouched, per the design.
   if (winner && status === 'completed') {
     const loser = winner === first ? second : first;
     const settled = applyMatchResult(winner.ratingBefore, loser.ratingBefore);
-
     if (winner === first) {
       firstAfter = settled.winnerRating;
       secondAfter = settled.loserRating;
@@ -102,21 +101,24 @@ async function endMatch(
       secondAfter = settled.winnerRating;
       firstAfter = settled.loserRating;
     }
-
-    await Promise.all([saveRating(first.userId, firstAfter), saveRating(second.userId, secondAfter)]);
+    await Promise.all([
+      saveRating(first.userId, firstAfter),
+      saveRating(second.userId, secondAfter),
+    ]);
   }
 
-  const endedAt = new Date();
-
   for (const player of match.players) {
+    if (!player.socketId) continue;
+    const opponent = player === first ? second : first;
     const after = player === first ? firstAfter : secondAfter;
     const won = winner?.userId === player.userId;
 
-    if (!player.socketId) continue;
     io.to(player.socketId).emit('match:end', {
       matchId: match.id,
-      result: status === 'draw' ? 'draw' : won ? 'win' : status === 'abandoned' ? 'win' : 'loss',
+      result: status === 'draw' ? 'draw' : won ? 'win' : 'loss',
       status,
+      score: playerScore(match, player),
+      opponentScore: playerScore(match, opponent),
       winnerId: winner?.userId ?? null,
       winnerName: winner?.name ?? null,
       ratingBefore: player.ratingBefore,
@@ -139,21 +141,33 @@ async function endMatch(
     player2RatingAfter: secondAfter,
     status,
     startedAt: new Date(match.startedAt),
-    endedAt,
+    endedAt: new Date(),
   });
 
   console.log(`[match] ${match.id} ended (${status})`);
 }
 
+/** Decides a finished timed match on score, or calls it a draw. */
+function endOnScore(io: XeetServer, ctx: HandlerContext, match: LiveMatch): Promise<void> {
+  const [a, b] = match.players;
+  const scoreA = playerScore(match, a);
+  const scoreB = playerScore(match, b);
+
+  if (scoreA === scoreB) return endMatch(io, ctx, match, { status: 'draw' });
+  return endMatch(io, ctx, match, {
+    winner: scoreA > scoreB ? a : b,
+    status: 'completed',
+  });
+}
+
 function startMatch(
   io: XeetServer,
   ctx: HandlerContext,
-  mode: 'online' | 'friend',
-  topic: TopicSelection,
+  format: MatchFormat,
   first: { socketId: string; userId: string; name: string; rating: number },
   second: { socketId: string; userId: string; name: string; rating: number },
 ): void {
-  const problem = pickProblem(topic);
+  const problem = pickProblem('random');
   if (!problem) {
     const message = 'No problems are available right now.';
     io.to(first.socketId).emit('lobby:error', { message });
@@ -163,14 +177,9 @@ function startMatch(
 
   const match = ctx.matches.create({
     problem,
-    mode,
+    mode: 'friend',
     players: [
-      {
-        userId: first.userId,
-        name: first.name,
-        socketId: first.socketId,
-        ratingBefore: first.rating,
-      },
+      { userId: first.userId, name: first.name, socketId: first.socketId, ratingBefore: first.rating },
       {
         userId: second.userId,
         name: second.name,
@@ -178,10 +187,9 @@ function startMatch(
         ratingBefore: second.rating,
       },
     ],
-    // Timer expiry with nobody solving it is a draw — no rating change.
-    onExpire: (expired) => {
-      void endMatch(io, ctx, expired, { status: 'draw' });
-    },
+    durationMs: format.timed ? (format.minutes ?? 15) * 60 * 1000 : null,
+    // Clock ran out: whoever scored higher takes it.
+    onExpire: (expired) => void endOnScore(io, ctx, expired),
   });
 
   for (const player of match.players) {
@@ -191,47 +199,17 @@ function startMatch(
     if (payload) io.to(player.socketId).emit('match:found', payload);
   }
 
-  console.log(`[match] ${match.id} started (${mode}, ${problem.slug})`);
+  console.log(
+    `[match] ${match.id} started (${problem.slug}, ${format.timed ? `${format.minutes}m` : 'untimed'})`,
+  );
 }
 
 export function registerHandlers(io: XeetServer, ctx: HandlerContext): void {
   io.on('connection', (socket: XeetSocket) => {
     console.log(`[socket] connected: ${socket.id}`);
 
-    socket.on('queue:join', (payload) => {
-      void (async () => {
-        const topic: TopicSelection = isTopicSelection(payload?.topic) ? payload.topic : 'random';
-        const identity = await getOrCreatePlayer(
-          String(payload?.playerId ?? ''),
-          sanitizeName(payload?.name),
-        );
-
-        const player: QueuedPlayer = {
-          socketId: socket.id,
-          userId: identity.id,
-          name: identity.name,
-          rating: identity.rating,
-          topic,
-          joinedAt: Date.now(),
-        };
-
-        const pairing = ctx.queue.join(player);
-        if (!pairing) {
-          socket.emit('queue:waiting', { topic, queueSize: ctx.queue.size(topic) });
-          return;
-        }
-
-        startMatch(io, ctx, 'online', topic, pairing.first, pairing.second);
-      })();
-    });
-
-    socket.on('queue:leave', () => {
-      ctx.queue.leaveBySocket(socket.id);
-    });
-
     socket.on('lobby:create', (payload) => {
       void (async () => {
-        const topic: TopicSelection = isTopicSelection(payload?.topic) ? payload.topic : 'random';
         const identity = await getOrCreatePlayer(
           String(payload?.playerId ?? ''),
           sanitizeName(payload?.name),
@@ -242,7 +220,7 @@ export function registerHandlers(io: XeetServer, ctx: HandlerContext): void {
           hostUserId: identity.id,
           hostName: identity.name,
           hostRating: identity.rating,
-          topic,
+          format: sanitizeFormat(payload?.format),
         });
 
         socket.emit('lobby:created', { code: lobby.code });
@@ -258,8 +236,8 @@ export function registerHandlers(io: XeetServer, ctx: HandlerContext): void {
           socket.emit('lobby:error', {
             message:
               result.reason === 'own_lobby'
-                ? "That's your own lobby code — share it with a friend."
-                : 'That lobby code is invalid or has expired.',
+                ? "That's your own code — share it with a friend."
+                : 'That code is invalid or has expired.',
           });
           return;
         }
@@ -278,20 +256,14 @@ export function registerHandlers(io: XeetServer, ctx: HandlerContext): void {
         startMatch(
           io,
           ctx,
-          'friend',
-          lobby.topic,
+          lobby.format,
           {
             socketId: lobby.hostSocketId,
             userId: lobby.hostUserId,
             name: lobby.hostName,
             rating: lobby.hostRating,
           },
-          {
-            socketId: socket.id,
-            userId: joiner.id,
-            name: joiner.name,
-            rating: joiner.rating,
-          },
+          { socketId: socket.id, userId: joiner.id, name: joiner.name, rating: joiner.rating },
         );
       })();
     });
@@ -303,6 +275,10 @@ export function registerHandlers(io: XeetServer, ctx: HandlerContext): void {
 
         const player = match.players.find((candidate) => candidate.socketId === socket.id);
         if (!player) return;
+
+        // Once solved, the score is locked in — further attempts would only
+        // subtract from it, so the button is disabled client-side too.
+        if (player.solved) return;
 
         const now = Date.now();
         if (now < player.cooldownUntil) {
@@ -319,28 +295,43 @@ export function registerHandlers(io: XeetServer, ctx: HandlerContext): void {
         player.lastCode = code;
         player.attemptCount += 1;
 
-        const opponent = match.players.find((candidate) => candidate !== player);
-        if (opponent?.socketId) {
-          // The opponent learns only that an attempt happened — never the code
-          // or whether it passed.
+        const verdict = await judgeSubmission(match.problem, code);
+        if (match.finished) return; // the clock may have run out mid-judge
+
+        player.bestPassedCount = Math.max(player.bestPassedCount, verdict.passedCount);
+        if (verdict.passed) player.solved = true;
+
+        const score = playerScore(match, player);
+        const opponent = match.players.find((candidate) => candidate !== player)!;
+
+        socket.emit('match:submissionResult', {
+          ...verdict,
+          bestPassedCount: player.bestPassedCount,
+          score,
+          attemptCount: player.attemptCount,
+          ...(verdict.passed ? {} : { cooldownUntil: Date.now() + SUBMISSION_COOLDOWN_MS }),
+        });
+
+        if (!verdict.passed) player.cooldownUntil = Date.now() + SUBMISSION_COOLDOWN_MS;
+
+        if (opponent.socketId) {
+          // The opponent sees the public score and nothing about the code.
           io.to(opponent.socketId).emit('match:opponentSubmitted', {
             attemptCount: player.attemptCount,
+            score,
+            solved: player.solved,
           });
         }
 
-        const verdict = await judgeSubmission(match.problem, code);
+        if (!verdict.passed) return;
 
-        // The clock may have run out while the judge was running.
-        if (match.finished) return;
-
-        if (verdict.passed) {
-          socket.emit('match:submissionResult', verdict);
+        // Untimed: first full pass takes it. Timed: play on unless both are
+        // done, since the opponent can still out-score a sloppy win.
+        if (match.endsAt === null) {
           await endMatch(io, ctx, match, { winner: player, status: 'completed' });
-          return;
+        } else if (match.players.every((candidate) => candidate.solved)) {
+          await endOnScore(io, ctx, match);
         }
-
-        player.cooldownUntil = Date.now() + SUBMISSION_COOLDOWN_MS;
-        socket.emit('match:submissionResult', { ...verdict, cooldownUntil: player.cooldownUntil });
       })();
     });
 
@@ -351,7 +342,8 @@ export function registerHandlers(io: XeetServer, ctx: HandlerContext): void {
       const player = match.players.find((candidate) => candidate.socketId === socket.id);
       if (!player) return;
 
-      const text = typeof payload.text === 'string' ? payload.text.trim().slice(0, MAX_CHAT_LENGTH) : '';
+      const text =
+        typeof payload.text === 'string' ? payload.text.trim().slice(0, MAX_CHAT_LENGTH) : '';
       if (!text) return;
 
       const message: ChatMessagePayload = {
@@ -389,13 +381,15 @@ export function registerHandlers(io: XeetServer, ctx: HandlerContext): void {
         endsAt: match.endsAt,
         attemptCount: sides.self.attemptCount,
         opponentAttemptCount: sides.opponent.attemptCount,
+        score: playerScore(match, sides.self),
+        opponentScore: playerScore(match, sides.opponent),
+        bestPassedCount: sides.self.bestPassedCount,
+        solved: sides.self.solved,
         ...(sides.self.lastCode ? { lastCode: sides.self.lastCode } : {}),
         chatHistory: match.chat,
       });
 
-      if (sides.opponent.socketId) {
-        io.to(sides.opponent.socketId).emit('opponent:reconnected');
-      }
+      if (sides.opponent.socketId) io.to(sides.opponent.socketId).emit('opponent:reconnected');
     });
 
     socket.on('match:leave', (payload) => {
@@ -415,7 +409,6 @@ export function registerHandlers(io: XeetServer, ctx: HandlerContext): void {
     socket.on('disconnect', (reason) => {
       console.log(`[socket] disconnected: ${socket.id} (${reason})`);
 
-      ctx.queue.leaveBySocket(socket.id);
       ctx.lobbies.removeByHostSocket(socket.id);
 
       const detached = ctx.matches.detachSocket(socket.id);

@@ -9,11 +9,14 @@ import { useCountdown } from '@/lib/useCountdown';
 export function SubmitButton({
   onSubmit,
   judging,
+  solved,
   finished,
   cooldownUntil,
 }: {
   onSubmit: () => void;
   judging: boolean;
+  /** Already passed everything — the score is locked, so stop accepting tries. */
+  solved: boolean;
   finished: boolean;
   cooldownUntil?: number;
 }) {
@@ -23,10 +26,16 @@ export function SubmitButton({
   return (
     <button
       onClick={onSubmit}
-      disabled={judging || cooling || finished}
+      disabled={judging || cooling || finished || solved}
       className="rounded-md bg-win px-4 py-1.5 text-sm font-medium text-[#1a1a1a] transition-opacity hover:opacity-90 disabled:opacity-40"
     >
-      {judging ? 'Judging…' : cooling ? `Wait ${Math.ceil(cooldownMs / 1000)}s` : 'Submit'}
+      {solved
+        ? 'Solved'
+        : judging
+          ? 'Judging…'
+          : cooling
+            ? `Wait ${Math.ceil(cooldownMs / 1000)}s`
+            : 'Submit'}
     </button>
   );
 }

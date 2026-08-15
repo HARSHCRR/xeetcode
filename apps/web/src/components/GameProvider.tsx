@@ -8,10 +8,10 @@ import type {
   ChatMessagePayload,
   ClientToServerEvents,
   MatchEndPayload,
+  MatchFormat,
   MatchFoundPayload,
   ServerToClientEvents,
   SubmissionResultPayload,
-  TopicSelection,
 } from '@xeetcode/shared';
 
 import { BACKEND_URL } from '@/lib/config';
@@ -25,6 +25,9 @@ export type GameStatus = 'idle' | 'queued' | 'hosting' | 'in_match';
 export interface MatchView extends MatchFoundPayload {
   attemptCount: number;
   opponentAttemptCount: number;
+  score: number;
+  opponentScore: number;
+  solved: boolean;
   lastCode?: string;
 }
 
@@ -39,10 +42,7 @@ interface GameState {
   opponentOnline: boolean;
   lobbyCode: string | null;
   error: string | null;
-  queuedSince: number | null;
-  joinQueue: (topic: TopicSelection) => void;
-  leaveQueue: () => void;
-  createLobby: (topic: TopicSelection) => void;
+  createLobby: (format: MatchFormat) => void;
   joinLobby: (code: string) => void;
   submitCode: (code: string) => void;
   sendChat: (text: string) => void;
@@ -74,7 +74,6 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   const [opponentOnline, setOpponentOnline] = useState(true);
   const [lobbyCode, setLobbyCode] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [queuedSince, setQueuedSince] = useState<number | null>(null);
 
   useEffect(() => {
     const socket: GameSocket = io(BACKEND_URL, { transports: ['websocket', 'polling'] });
@@ -90,14 +89,20 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     );
 
     socket.on('match:found', (payload) => {
-      setMatch({ ...payload, attemptCount: 0, opponentAttemptCount: 0 });
+      setMatch({
+        ...payload,
+        attemptCount: 0,
+        opponentAttemptCount: 0,
+        score: 0,
+        opponentScore: 0,
+        solved: false,
+      });
       setResult(null);
       setSubmission(null);
       setChat([]);
       setOpponentOnline(true);
       setStatus('in_match');
       setLobbyCode(null);
-      setQueuedSince(null);
       setStoredMatch({ matchId: payload.matchId, userId: payload.userId });
       router.push(`/match/${payload.matchId}`);
     });
@@ -115,21 +120,33 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         endsAt: payload.endsAt,
         attemptCount: payload.attemptCount,
         opponentAttemptCount: payload.opponentAttemptCount,
+        score: payload.score,
+        opponentScore: payload.opponentScore,
+        solved: payload.solved,
         ...(payload.lastCode ? { lastCode: payload.lastCode } : {}),
       });
       setChat(payload.chatHistory);
       setStatus('in_match');
     });
 
-    socket.on('match:opponentSubmitted', ({ attemptCount }) => {
-      setMatch((current) => (current ? { ...current, opponentAttemptCount: attemptCount } : current));
+    socket.on('match:opponentSubmitted', ({ attemptCount, score }) => {
+      setMatch((current) =>
+        current ? { ...current, opponentAttemptCount: attemptCount, opponentScore: score } : current,
+      );
     });
 
     socket.on('match:submissionResult', (payload) => {
       setSubmission(payload);
       setJudging(false);
       setMatch((current) =>
-        current ? { ...current, attemptCount: current.attemptCount + 1 } : current,
+        current
+          ? {
+              ...current,
+              attemptCount: payload.attemptCount ?? current.attemptCount + 1,
+              score: payload.score ?? current.score,
+              solved: current.solved || payload.passed,
+            }
+          : current,
       );
     });
 
@@ -163,26 +180,10 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
 
   const identity = useCallback(() => ({ playerId: getPlayerId(), name: getPlayerName() }), []);
 
-  const joinQueue = useCallback(
-    (topic: TopicSelection) => {
-      setError(null);
-      setStatus('queued');
-      setQueuedSince(Date.now());
-      socketRef.current?.emit('queue:join', { ...identity(), topic });
-    },
-    [identity],
-  );
-
-  const leaveQueue = useCallback(() => {
-    socketRef.current?.emit('queue:leave');
-    setStatus('idle');
-    setQueuedSince(null);
-  }, []);
-
   const createLobby = useCallback(
-    (topic: TopicSelection) => {
+    (format: MatchFormat) => {
       setError(null);
-      socketRef.current?.emit('lobby:create', { ...identity(), topic });
+      socketRef.current?.emit('lobby:create', { ...identity(), format });
     },
     [identity],
   );
@@ -229,7 +230,6 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     setJudging(false);
     setChat([]);
     setLobbyCode(null);
-    setQueuedSince(null);
     setError(null);
     clearStoredMatch();
   }, []);
@@ -246,9 +246,6 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       opponentOnline,
       lobbyCode,
       error,
-      queuedSince,
-      joinQueue,
-      leaveQueue,
       createLobby,
       joinLobby,
       submitCode,
@@ -268,9 +265,6 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       opponentOnline,
       lobbyCode,
       error,
-      queuedSince,
-      joinQueue,
-      leaveQueue,
       createLobby,
       joinLobby,
       submitCode,

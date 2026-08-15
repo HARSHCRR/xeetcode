@@ -2,9 +2,26 @@
 
 Real-time 1v1 competitive coding — Chess.com-style matchmaking meets LeetCode.
 
-> **Status: feature-complete for v1.** Matchmaking, friend lobbies, the Monaco
-> editor, sandboxed judging, the 15-minute timer, in-match chat, Elo, and the
-> result screen all work end to end.
+> **Status: v2 — friend matches only.** One page: enter a name, create a code or
+> join with one. Both players get the same random Blind 75 problem, a Monaco
+> editor, sandboxed judging, chat, and a score.
+
+## How a match works
+
+Create a code, share it, your friend enters it — you're both in the same match
+on a random problem from the 75.
+
+**Score** = `tests passed × 10 − attempts × 2`, plus **50** for passing
+everything, floored at 0. It uses your *best* submission, so trying a riskier
+idea can't cost you ground you already earned. Once you pass everything your
+score locks and Submit disables — further attempts could only subtract.
+
+- **Timed** (15 / 20 / 30 min) — the clock runs out and the higher score wins.
+  It ends early only if both players have solved it, since there's nothing left
+  to gain. Equal scores are a draw.
+- **Untimed** — the first full pass wins immediately.
+
+Leaving concedes the match.
 
 ## Architecture
 
@@ -14,7 +31,7 @@ hold a long-lived WebSocket or in-memory matchmaking state:
 | Piece | Runs on | Why |
 | --- | --- | --- |
 | `apps/web` — Next.js UI | Vercel | Stateless pages, static assets, Monaco editor |
-| `apps/server` — Express + Socket.IO | Render | Always-on process owning queues, lobbies, live match state |
+| `apps/server` — Express + Socket.IO | Render | Always-on process owning lobbies and live match state |
 | `packages/shared` — TS types + Elo | consumed by both | One source of truth for the wire format |
 
 The browser loads the UI from Vercel and opens a WebSocket **directly** to the
@@ -24,7 +41,7 @@ Render service — realtime traffic does not pass through Vercel.
 
 ```
 apps/
-  web/        Next.js (App Router) + Tailwind v4 + Monaco (Phase 3)
+  web/        Next.js (App Router) + Tailwind v4 + Monaco
   server/     Express + Socket.IO realtime backend
 packages/
   shared/     Socket event contracts, shared constants, Elo logic
@@ -56,8 +73,7 @@ Both have working localhost defaults, so this is optional for local dev.
 ### Database (optional locally)
 
 The server runs without a database — it falls back to the problem bank bundled
-in `apps/server/src/problems/bank.ts`, so nothing needs setting up to develop
-matchmaking. To use Postgres, set `DATABASE_URL` in `apps/server/.env`, then:
+in `apps/server/src/problems/`, so nothing needs setting up to develop a match. To use Postgres, set `DATABASE_URL` in `apps/server/.env`, then:
 
 ```bash
 npm run db:migrate -w @xeetcode/server   # applies schema.sql (safe to re-run)
@@ -69,9 +85,9 @@ the Render dashboard, never in the repo.
 
 ## Testing two players locally
 
-Matchmaking needs two sessions. Open the app in a normal window **and** a
+A match needs two sessions. Open the app in a normal window **and** a
 private/incognito window — they need separate `localStorage`, so two tabs in the
-same profile share a name but still work as two distinct players.
+same profile would otherwise share one identity.
 
 ## Checks
 
@@ -83,14 +99,6 @@ npm run typecheck
 npm test
 npm run build
 ```
-
-## Theming
-
-The v1 look is a space theme, kept swappable on purpose. All colour lives in
-semantic tokens in `apps/web/src/styles/themes/space.css`; components reference
-utilities like `bg-surface` / `text-accent`, never raw hex values. Changing the
-visual direction means adding a sibling theme file with the same token names and
-swapping one import in `apps/web/src/styles/globals.css`.
 
 ## Deployment
 

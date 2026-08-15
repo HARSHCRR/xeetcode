@@ -108,9 +108,10 @@ export default function MatchRoomPage() {
         <div className="flex min-w-0 items-center gap-3">
           <span className="font-semibold text-accent">Xeetcode</span>
           <span className="hidden truncate text-sm text-ink-muted sm:inline">
-            {playerName} <span className="text-ink-faint">({match.rating})</span>
+            {playerName} <span className="font-mono text-win">{match.score}</span>
             <span className="mx-2 text-ink-faint">vs</span>
-            {match.opponentName} <span className="text-ink-faint">({match.opponentRating})</span>
+            {match.opponentName}{' '}
+            <span className="font-mono text-ink">{match.opponentScore}</span>
           </span>
         </div>
 
@@ -118,10 +119,14 @@ export default function MatchRoomPage() {
           {!opponentOnline && <span className="text-xs text-warn">Opponent disconnected</span>}
           {match.opponentAttemptCount > 0 && (
             <span className="hidden text-xs text-ink-faint sm:inline">
-              Opponent submitted ×{match.opponentAttemptCount}
+              Opponent tried ×{match.opponentAttemptCount}
             </span>
           )}
-          <MatchTimer endsAt={match.endsAt} />
+          {match.endsAt === null ? (
+            <span className="text-xs text-ink-faint">Untimed</span>
+          ) : (
+            <MatchTimer endsAt={match.endsAt} />
+          )}
           <button
             onClick={backToLobby}
             className="rounded-md px-3 py-1.5 text-sm text-ink-muted transition-colors hover:text-ink"
@@ -176,9 +181,14 @@ export default function MatchRoomPage() {
         <section className="flex min-h-0 flex-1 flex-col">
           <div className="flex shrink-0 items-center justify-between border-b border-edge bg-surface px-4 py-2">
             <span className="font-mono text-xs text-ink-faint">JavaScript</span>
+            <span className="ml-auto mr-3 text-xs text-ink-faint">
+              Score <span className="font-mono text-ink">{match.score}</span> · tried{' '}
+              {match.attemptCount}
+            </span>
             <SubmitButton
               onSubmit={() => submitCode(code)}
               judging={judging}
+              solved={match.solved}
               finished={Boolean(result)}
               {...(submission?.cooldownUntil ? { cooldownUntil: submission.cooldownUntil } : {})}
             />
